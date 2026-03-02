@@ -8,3 +8,9 @@
 [submodule "libDaisy"]
 	path = libDaisy
 	url = https://github.com/electro-smith/libDaisy
+[submodule "patch_sm/Resynthesis/libDaisy"]
+	path = patch_sm/Resynthesis/libDaisy
+	url = https://github.com/electro-smith/libDaisy.git
+[submodule "patch_sm/Resynthesis/DaisySP"]
+	path = patch_sm/Resynthesis/DaisySP
+	url = https://github.com/electro-smith/DaisySP.git
