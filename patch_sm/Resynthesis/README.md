@@ -10,13 +10,13 @@ Incoming audio is analyzed into overlapping FFT grains, processed spectrally (ph
 - **CV_2 – Magnitude Smoothing**: Controls how quickly spectral magnitudes follow the input. Low values track transients closely; high values smear dynamics into pads.
 - **CV_3 – Spectral Flatten**: Blends each bin’s magnitude toward the frame mean. Higher settings flatten the spectrum for more “noisy”/even energy.
 - **CV_4 – Bright/Dark Tilt**: Spectral tilt. Negative values emphasize low bins (darker), positive values emphasize high bins (brighter).
-- **CV_5 – Pitch Shift (1.2 V/oct)**: Controls a phase‑vocoder pitch ratio derived from a 1.2 V/oct CV. Around mid‑range corresponds to unison; up/down shifts pitch in semitones.
-- **CV_6 – Time‑Stretch / Grain Density**: Changes how often grains are launched relative to the analysis hop. Lower values smear and “freeze” audio; higher values increase grain density and motion.
-- **CV_7 – Spectral Sparsity**: Removes bins below a threshold relative to the strongest bin. Higher values keep only the most energetic components for hollow, formant‑like, or vocoder‑style tones.
-- **CV_8 – Phase Diffusion**: Adds random phase offsets (stronger at higher frequencies). Low values keep a clear, pitched sound; high values produce noisy, cloud‑like textures.
+- **CV_5 – Pitch Shift (bipolar, -5 V to +5 V)**: Bipolar pitch CV. -5 V corresponds to a large downward pitch shift, +5 V to a large upward shift, and 0 V is unison. Internally this is mapped to a wide semitone range using a phase‑vocoder pitch ratio.
+- **CV_6 – Time‑Stretch / Grain Density (bipolar, -5 V to +5 V)**: Bipolar control around 1× time. Negative voltages slow down and smear the audio (down to roughly 0.25×), positive voltages increase grain density and motion (up to roughly 4×).
+- **CV_7 – Spectral Sparsity (bipolar, -5 V to +5 V)**: Bipolar control mapped to 0–1. At 0 V the sparsity is centered; negative voltages reduce sparsity, positive voltages increase it so only the strongest bins remain.
+- **CV_8 – Phase Diffusion (bipolar, -5 V to +5 V)**: Bipolar control mapped to 0–1. At 0 V diffusion is moderate; negative voltages reduce diffusion for clearer tone, positive voltages increase diffusion for noisy, cloud‑like textures.
 
 **Switch B_8 (CV swap)**  
-When the toggle on B_8 is flipped to 1, the two banks of CVs are swapped: parameters normally driven by CV_1–CV_4 are then driven by CV_5–CV_8, and vice versa. So with B_8 on, CV_5 = dry/wet, CV_6 = smoothing, CV_7 = flatten, CV_8 = bright/dark, and CV_1–CV_4 = pitch, time-stretch, sparsity, phase diffusion.
+When the toggle on B_8 is flipped to 1, the two banks of CVs are swapped: parameters normally driven by CV_1–CV_4 are then driven by CV_5–CV_8, and vice versa. The **bipolar -5 V to +5 V scaling for CV_5–CV_8 is preserved regardless of which bank currently controls which parameter.**
 
 **Switch B_7 (Plateau reverb)**  
 Toggles a large-hall, plate-style reverb (implemented in `Plateau.cpp` using DaisySP’s `ReverbSc`). When B_7 is off, the output is completely dry (only the resynth signal). When B_7 is on, the signal is mixed 50/50 between dry and the Plateau reverb.
@@ -27,7 +27,7 @@ Toggles a large-hall, plate-style reverb (implemented in `Plateau.cpp` using Dai
    ```bash
    git submodule update --init --recursive
    ```
-2. **Build the project**:
+2. **Build the project (normal / release)**:
    ```bash
    make
    ```
@@ -35,4 +35,17 @@ Toggles a large-hall, plate-style reverb (implemented in `Plateau.cpp` using Dai
    ```bash
    make program
    ```
+
+4. **Debug build with JTAG/serial logging (optional)**:
+   - Start OpenOCD in one terminal:
+     ```bash
+     make openocd
+     ```
+   - In another terminal, build and start a debug session:
+     ```bash
+     make debug
+     ```
+   In debug builds the firmware enables Daisy’s logger and:
+   - Prints the startup values of all CV_1–CV_8 inputs and the states of switches B_7 and B_8.
+   - Periodically prints diagnostic information while audio runs (active grains, spectral energy, current control values, etc.) over the JTAG/serial link.
 

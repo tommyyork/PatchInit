@@ -21,6 +21,32 @@ using namespace daisysp;
 using namespace patch_sm;
 
 // ----------------------------------------------------------------------
+// Optional debug logging over JTAG/serial (enabled when DEBUG is set)
+// ----------------------------------------------------------------------
+#ifdef DEBUG
+#define RES_DEBUG 1
+#endif
+
+#ifdef RES_DEBUG
+#define RES_DEBUG_PRINTLN(...) patch.PrintLine(__VA_ARGS__)
+#define RES_DEBUG_PRINT(...) patch.Print(__VA_ARGS__)
+#else
+#define RES_DEBUG_PRINTLN(...)
+#define RES_DEBUG_PRINT(...)
+#endif
+
+// ----------------------------------------------------------------------
+// Helpers for bipolar CV scaling (-5 V .. +5 V)
+// ----------------------------------------------------------------------
+
+static inline float CvToBipolar(float v)
+{
+    // Daisy Patch SM CV inputs are bipolar -5..+5 V and exposed as 0..1.
+    // Map 0..1 -> -1..1 where -1 ≈ -5 V, 0 ≈ 0 V, +1 ≈ +5 V.
+    return v * 2.0f - 1.0f;
+}
+
+// ----------------------------------------------------------------------
 // Simple complex type and FFT implementation (radix-2 Cooley-Tukey)
 // ----------------------------------------------------------------------
 
@@ -405,6 +431,40 @@ static float  time_scale         = 1.0f;
 static float  cv_energy_smooth   = 0.0f;
 static const float cv_energy_coeff = 0.002f;  // smoothing (~0.1s at 48kHz block rate)
 
+#ifdef RES_DEBUG
+// Debug-logging cadence in audio samples (set from runtime sample rate)
+static float    g_sample_rate            = 48000.0f;
+static uint32_t g_debug_interval_samples = 48000; // ~1s by default
+static uint32_t g_debug_sample_accum     = 0;
+#endif
+
+#ifdef RES_DEBUG
+static void PrintStartupStatus()
+{
+    patch.ProcessAnalogControls();
+    cv_swap_switch.Debounce();
+    plateau_switch.Debounce();
+
+    RES_DEBUG_PRINTLN("Resynthesis (Patch SM) debug build starting");
+
+    RES_DEBUG_PRINTLN("CV inputs at startup:");
+    RES_DEBUG_PRINT("CV_1: " FLT_FMT3 "\tCV_2: " FLT_FMT3 "\tCV_3: " FLT_FMT3 "\tCV_4: " FLT_FMT3 "\n",
+                    FLT_VAR3(patch.GetAdcValue(CV_1)),
+                    FLT_VAR3(patch.GetAdcValue(CV_2)),
+                    FLT_VAR3(patch.GetAdcValue(CV_3)),
+                    FLT_VAR3(patch.GetAdcValue(CV_4)));
+    RES_DEBUG_PRINT("CV_5: " FLT_FMT3 "\tCV_6: " FLT_FMT3 "\tCV_7: " FLT_FMT3 "\tCV_8: " FLT_FMT3 "\n",
+                    FLT_VAR3(patch.GetAdcValue(CV_5)),
+                    FLT_VAR3(patch.GetAdcValue(CV_6)),
+                    FLT_VAR3(patch.GetAdcValue(CV_7)),
+                    FLT_VAR3(patch.GetAdcValue(CV_8)));
+
+    RES_DEBUG_PRINTLN("Buttons / switches at startup:");
+    RES_DEBUG_PRINTLN("B7 Plateau: %s", plateau_switch.Pressed() ? "ON" : "OFF");
+    RES_DEBUG_PRINTLN("B8 CV swap: %s", cv_swap_switch.Pressed() ? "PRESSED" : "RELEASED");
+}
+#endif
+
 void StartNextGrain()
 {
     // Find an available grain (or reuse the first one)
@@ -451,22 +511,73 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     float sparsity_cv   = swap_cv ? v3 : v7;
     float diffusion_cv  = swap_cv ? v4 : v8;
 
+    // Normalize CV_5..CV_8 (and their swapped counterparts) to bipolar -1..1
+    // so that a physical range of -5 V .. +5 V is fully utilized and centered.
+    float voct_bi      = CvToBipolar(voct_cv);
+    float time_bi      = CvToBipolar(time_cv);
+    float sparsity_bi  = CvToBipolar(sparsity_cv);
+    float diffusion_bi = CvToBipolar(diffusion_cv);
+
     float drywet = fmap(drywet_knob, 0.0f, 1.0f);
     resynth.SetSmoothing(fmap(smooth_knob, 0.0f, 1.0f));
     resynth.SetSpectralFlatten(fmap(flatten_knob, 0.0f, 1.0f));
     resynth.SetBrightDark(fmap(tilt_knob, -1.0f, 1.0f));
 
-    // 1.2V/oct: map CV_5 to semitones (e.g. 0–60), center at 24 for unison
-    float semitones   = fmap(voct_cv, 0.0f, 60.0f);
-    float pitch_ratio = powf(2.0f, (semitones - 24.0f) / 12.0f);
+    // Bipolar pitch CV on CV_5 (or its swapped input):
+    // -5 V .. +5 V ~= -60 .. +60 semitones around unison.
+    float semitones   = voct_bi * 60.0f;
+    float pitch_ratio = powf(2.0f, semitones / 12.0f);
     resynth.SetPitchRatio(pitch_ratio);
 
     // Time-stretch / grain density: <1 = slower, >1 = denser
-    time_scale = fmap(time_cv, 0.25f, 4.0f);
+    // Map -5 V .. +5 V (~-1..1) to ~0.25x .. 4x around 1.0x using an exponential curve.
+    time_scale = powf(2.0f, time_bi * 2.0f); // -1 -> 0.25, 0 -> 1.0, 1 -> 4.0
 
-    // Spectral sparsity and phase diffusion
-    resynth.SetSparsity(fmap(sparsity_cv, 0.0f, 1.0f));
-    resynth.SetPhaseDiffusion(fmap(diffusion_cv, 0.0f, 1.0f));
+    // Spectral sparsity and phase diffusion, centered at 0.5 when CV = 0 V
+    resynth.SetSparsity(0.5f * (sparsity_bi + 1.0f));   // -1..1 -> 0..1
+    resynth.SetPhaseDiffusion(0.5f * (diffusion_bi + 1.0f)); // -1..1 -> 0..1
+
+#ifdef RES_DEBUG
+    // Periodic debug dump of control and spectral state
+    g_debug_sample_accum += size;
+    if(g_debug_interval_samples == 0)
+        g_debug_interval_samples = 48000;
+    if(g_debug_sample_accum >= g_debug_interval_samples)
+    {
+        g_debug_sample_accum = 0;
+
+        size_t active_grains = 0;
+        for(size_t g = 0; g < kNumGrains; ++g)
+        {
+            if(grains[g].running)
+                ++active_grains;
+        }
+
+        float smooth_amt    = fmap(smooth_knob, 0.0f, 1.0f);
+        float flatten_amt   = fmap(flatten_knob, 0.0f, 1.0f);
+        float tilt_amt      = fmap(tilt_knob, -1.0f, 1.0f);
+        float sparsity_amt  = 0.5f * (sparsity_bi + 1.0f);
+        float diffusion_amt = 0.5f * (diffusion_bi + 1.0f);
+
+        RES_DEBUG_PRINTLN("DBG: drywet=" FLT_FMT3 ", smooth=" FLT_FMT3
+                          ", flatten=" FLT_FMT3 ", tilt=" FLT_FMT3,
+                          FLT_VAR3(drywet),
+                          FLT_VAR3(smooth_amt),
+                          FLT_VAR3(flatten_amt),
+                          FLT_VAR3(tilt_amt));
+
+        RES_DEBUG_PRINTLN("DBG: pitch_ratio=" FLT_FMT3 ", time_scale=" FLT_FMT3
+                          ", sparsity=" FLT_FMT3 ", phase_diff=" FLT_FMT3,
+                          FLT_VAR3(pitch_ratio),
+                          FLT_VAR3(time_scale),
+                          FLT_VAR3(sparsity_amt),
+                          FLT_VAR3(diffusion_amt));
+
+        RES_DEBUG_PRINTLN("DBG: spectral_energy=" FLT_FMT3 ", active_grains=%u",
+                          FLT_VAR3(resynth.last_frame_spectral_energy),
+                          static_cast<unsigned>(active_grains));
+    }
+#endif
 
     for(size_t i = 0; i < size; i++)
     {
@@ -539,6 +650,12 @@ int main(void)
     plateau_switch.Init(patch.B7);
     resynth.Init();
     plateau.Init(patch.AudioSampleRate());
+#ifdef RES_DEBUG
+    g_sample_rate            = patch.AudioSampleRate();
+    g_debug_interval_samples = static_cast<uint32_t>(g_sample_rate);
+    patch.StartLog(true);
+    PrintStartupStatus();
+#endif
     for(size_t g = 0; g < kNumGrains; ++g)
     {
         grains[g].running = false;
