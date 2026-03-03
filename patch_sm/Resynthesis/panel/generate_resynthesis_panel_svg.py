@@ -419,36 +419,53 @@ $SCREW_SLOTS
   <circle cx="43.65" cy="98.312" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
   <circle cx="43.65" cy="111.9" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
 
+  <!-- Output jack grouping: individual rounded rectangles centered on each jack. -->
+  <!-- CV_OUT_1 at (42.155, 59.288) -->
+  <rect x="38.155" y="55.288" width="8.0" height="8.0" rx="1.2"
+        fill="#ffffff" stroke="#ffffff" stroke-width="0.2" />
+  <!-- B5 at (31.483, 84.562) -->
+  <rect x="27.483" y="80.562" width="8.0" height="8.0" rx="1.2"
+        fill="#ffffff" stroke="#ffffff" stroke-width="0.2" />
+  <!-- B6 at (43.65, 84.562) -->
+  <rect x="39.650" y="80.562" width="8.0" height="8.0" rx="1.2"
+        fill="#ffffff" stroke="#ffffff" stroke-width="0.2" />
+  <!-- OUT L at (31.483, 111.9) -->
+  <rect x="27.483" y="107.900" width="8.0" height="8.0" rx="1.2"
+        fill="#ffffff" stroke="#ffffff" stroke-width="0.2" />
+  <!-- OUT R at (43.65, 111.9) -->
+  <rect x="39.650" y="107.900" width="8.0" height="8.0" rx="1.2"
+        fill="#ffffff" stroke="#ffffff" stroke-width="0.2" />
+
   <!-- Left switch (B_7, MAX COMP) at (8.65, 59.288): panel label split over two lines -->
-  <text x="8.65" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">MAX</text>
-  <text x="8.65" y="69.53" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">COMP</text>
+  <text x="8.65" y="66.5" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">MAX</text>
+  <text x="8.65" y="70.03" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">COMP</text>
 
   <!-- Centre switch (B_8, mode) at (25.503, 61.957): panel label PITCH LOCK, split over two lines.
        The top line is moved down so that the minimum vertical clearance from the drill center
        matches the padding used for THOUGHTS and MAX COMP. -->
-  <text x="25.503" y="68.7" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">PITCH</text>
-  <text x="25.503" y="72.23" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">LOCK</text>
+  <text x="25.503" y="69.2" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">PITCH</text>
+  <text x="25.503" y="72.73" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">LOCK</text>
 
   <!-- CV_OUT_1 / C10 jack at (42.155, 59.288): panel label THOUGHTS (rendered as !!! on panel) -->
-  <text x="42.155" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">!!!</text>
+  <text x="42.155" y="66.9" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">!!!</text>
 
   <!-- 12 jacks: labels OVER each jack, centered. Top row (y=84.562) ? B10, B9, B5, B6 -->
-  <text x="7.15" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B10</text>
-  <text x="19.317" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B9</text>
-  <text x="31.483" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B5</text>
-  <text x="43.65" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B6</text>
+  <text x="7.15" y="79.0" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B10</text>
+  <text x="19.317" y="79.0" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B9</text>
+  <text x="31.483" y="79.0" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B5</text>
+  <text x="43.65" y="79.0" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B6</text>
 
   <!-- Middle row (y=98.312) ? V/OCT, TIME, DENSITY, D (italic, diffusion) -->
-  <text x="7.15" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">V/OCT</text>
-  <text x="19.317" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">TIME</text>
-  <text x="31.483" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DENSITY</text>
-  <text x="43.65" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff" font-style="italic">D</text>
+  <text x="7.15" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">V/OCT</text>
+  <text x="19.317" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">TIME</text>
+  <text x="31.483" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DENSITY</text>
+  <text x="43.65" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff" font-style="italic">D</text>
 
   <!-- Bottom row (y=111.9) ? IN L, IN R, OUT L, OUT R -->
-  <text x="7.15" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">IN L</text>
-  <text x="19.317" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">IN R</text>
-  <text x="31.483" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT L</text>
-  <text x="43.65" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT R</text>
+  <text x="7.15" y="106.4" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">IN L</text>
+  <text x="19.317" y="106.4" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">IN R</text>
+  <text x="31.483" y="106.4" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT L</text>
+  <text x="43.65" y="106.4" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT R</text>
 
 </svg>
 """
@@ -569,6 +586,78 @@ def _load_sd_slot_from_edge_cuts() -> tuple[float, float, float, float] | None:
     return None
 
 
+def _add_text_backgrounds(svg: str) -> str:
+    """Add rounded black background rectangles behind all <text> elements.
+
+    The rectangles are sized using the same approximate text metrics as
+    test_panel_alignment._approx_text_bbox so that the visual boxes closely
+    follow the rendered text while remaining purely decorative (non‑mechanical).
+    """
+    import re as re_mod
+
+    pattern = re_mod.compile(r"(<text\b[^>]*>)(.*?)(</text>)", re_mod.DOTALL)
+
+    def _repl(match: re_mod.Match[str]) -> str:
+        open_tag, inner, close_tag = match.group(1), match.group(2), match.group(3)
+
+        x_m = re_mod.search(r'x="([^"]+)"', open_tag)
+        y_m = re_mod.search(r'y="([^"]+)"', open_tag)
+        fs_m = re_mod.search(r'font-size="([^"]+)"', open_tag)
+        if not (x_m and y_m and fs_m):
+            return match.group(0)
+
+        try:
+            x = float(eval(x_m.group(1), {}, {}))
+            y = float(eval(y_m.group(1), {}, {}))
+            fs = float(eval(fs_m.group(1), {}, {}))
+        except Exception:
+            return match.group(0)
+
+        anchor_m = re_mod.search(r'text-anchor="([^"]+)"', open_tag)
+        anchor = anchor_m.group(1) if anchor_m else "start"
+
+        # Strip any nested tags and normalise whitespace inside the text node.
+        text_content = re_mod.sub(r"<.*?>", "", inner)
+        text_content = " ".join(text_content.split())
+        if not text_content:
+            return match.group(0)
+
+        # Approximate bbox using the same heuristics as _approx_text_bbox.
+        char_w = 0.60 * fs
+        width = char_w * len(text_content)
+        height = 1.0 * fs
+
+        if anchor == "middle":
+            minx = x - width / 2.0
+            maxx = x + width / 2.0
+        elif anchor == "end":
+            minx = x - width
+            maxx = x
+        else:
+            minx = x
+            maxx = x + width
+
+        miny = y - 0.80 * height
+        maxy = y + 0.20 * height
+
+        pad = 0.6  # mm
+        rect_x = minx - pad
+        rect_y = miny - pad
+        rect_w = (maxx - minx) + 2.0 * pad
+        rect_h = (maxy - miny) + 2.0 * pad
+        rx = 0.4 * fs
+
+        rect = (
+            f'<rect x="{rect_x:.3f}" y="{rect_y:.3f}" '
+            f'width="{rect_w:.3f}" height="{rect_h:.3f}" '
+            f'rx="{rx:.3f}" fill="#000000" stroke="none" '
+            f'data-panel-role="label-bg" />'
+        )
+        return rect + "\n  " + match.group(0)
+
+    return pattern.sub(_repl, svg)
+
+
 def build_panel_svg() -> str:
     """Render the full panel SVG as a string."""
     screw_slots = _format_screw_slots()
@@ -600,6 +689,10 @@ def build_panel_svg() -> str:
         r'\1 fill="#000000"\2',
         svg,
     )
+
+    # Add black, rounded backgrounds behind all text labels so that each legend
+    # is rendered on a clear, legible box above the patterned copper background.
+    svg = _add_text_backgrounds(svg)
 
     # Additionally, overlay solid black geometry for all mechanical cutouts
     # derived from the Patch.Init manufacturing files:

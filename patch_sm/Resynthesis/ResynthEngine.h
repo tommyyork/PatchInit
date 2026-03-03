@@ -113,6 +113,10 @@ struct SimpleResynth
     float prev_phase[kNumBins + 1];
     float synth_phase[kNumBins + 1];
     float mag_smooth[kNumBins + 1];
+    // Instantaneous per-bin magnitudes of the current analysis frame
+    // (before spectral shaping). Used to ensure that the resynthesized
+    // fundamental and harmonics have at least as much energy as the input.
+    float mag_input[kNumBins + 1];
     bool  primed;
     float mag_smooth_coeff;
     float pitch_ratio;
@@ -141,9 +145,10 @@ struct SimpleResynth
             window[n] = 0.5f * (1.0f - cosf(kTwoPi * static_cast<float>(n) / static_cast<float>(kFftSize - 1)));
         for (size_t i = 0; i <= kNumBins; ++i)
         {
-            prev_phase[i] = 0.0f;
+            prev_phase[i]  = 0.0f;
             synth_phase[i] = 0.0f;
-            mag_smooth[i] = 0.0f;
+            mag_smooth[i]  = 0.0f;
+            mag_input[i]   = 0.0f;
         }
         primed = false;
         mag_smooth_coeff = 0.4f;
@@ -252,11 +257,16 @@ struct SimpleResynth
             float mag = sqrtf(re * re + im * im);
             float phase = atan2f(im, re) / kTwoPi;
 
+            // Keep the instantaneous per-bin magnitude of this frame so we can later
+            // ensure that the resynthesized fundamental and its harmonics are at least
+            // as strong as in the input.
+            mag_input[k] = mag;
+
             if (!primed)
             {
-                prev_phase[k] = phase;
+                prev_phase[k]  = phase;
                 synth_phase[k] = phase;
-                mag_smooth[k] = mag;
+                mag_smooth[k]  = mag;
                 continue;
             }
 
@@ -419,30 +429,92 @@ struct SimpleResynth
             //   (fundamental + harmonics) tuned to the requested fundamental so simple
             //   inputs (e.g. a bell) behave like a full synth voice.
             //
-            // In partial‑based mode only, reinforce fundamental and harmonics. Color
-            // (bright_dark) selects which family is emphasized: fully CCW (-1) = even
-            // harmonics only (2nd, 4th, 6th); fully CW (+1) = odd harmonics only
-            // (fundamental, 3rd, 5th).
-            if (!pitch_lock_mode_ && fundamental_hz_ > 0.0f && sample_rate_ > 0.0f)
+            // In partial‑based mode only, reinforce fundamental and harmonics; then
+            // top up their levels with additional sine energy so that:
+            // - the fundamental in the output is at least as loud as in the input;
+            // - each selected harmonic has at least half the level of the previous one.
+            if (fundamental_hz_ > 0.0f && sample_rate_ > 0.0f)
             {
                 float bins_per_hz = static_cast<float>(kFftSize) / sample_rate_;
-                int k0 = static_cast<int>(fundamental_hz_ * bins_per_hz + 0.5f);
+                int   k0          = static_cast<int>(fundamental_hz_ * bins_per_hz + 0.5f);
                 if (k0 < 1) k0 = 1;
                 if (k0 > static_cast<int>(kNumBins)) k0 = static_cast<int>(kNumBins);
+
                 // Crossfade: CCW = even only, CW = odd only (1-based: 1=fundamental, 2=2nd, ...)
                 float odd_amount  = 0.5f * (bright_dark + 1.0f);   // 0 at CCW, 1 at CW
                 float even_amount = 1.0f - odd_amount;             // 1 at CCW, 0 at CW
+
                 // Gains taper so partials sit with the resynthesis (harmonically rich but blended)
-                const float gains[] = { 0.55f, 0.4f, 0.3f, 0.22f, 0.18f, 0.14f };  // h=1..6
-                const int num_harmonics = 6;
-                for (int h = 1; h <= num_harmonics; ++h)
+                const float gains[]      = { 0.55f, 0.4f, 0.3f, 0.22f, 0.18f, 0.14f };  // h=1..6
+                const int   num_harmonics = 6;
+
+                // Existing harmonic reinforcement: only in partial‑based mode.
+                if (!pitch_lock_mode_)
+                {
+                    for (int h = 1; h <= num_harmonics; ++h)
+                    {
+                        int k = k0 * h;
+                        if (k > static_cast<int>(kNumBins)) break;
+                        float amount = (h & 1) ? odd_amount : even_amount;  // odd h -> odd_amount, even h -> even_amount
+                        float g = 1.0f + gains[h - 1] * amount;
+                        spectrum[k].re *= g;
+                        spectrum[k].im *= g;
+                    }
+                }
+
+                // Now ensure minimum levels by adding sine components if needed.
+
+                // Fundamental: ensure output magnitude >= input magnitude at k0.
+                float fund_in  = mag_input[k0];
+                float fund_out = sqrtf(spectrum[k0].re * spectrum[k0].re
+                                      + spectrum[k0].im * spectrum[k0].im);
+                if (fund_in > 0.0f && fund_out < fund_in)
+                {
+                    float needed = fund_in - fund_out;
+                    float phase  = (fund_out > 0.0f)
+                        ? atan2f(spectrum[k0].im, spectrum[k0].re)
+                        : 0.0f;
+                    spectrum[k0].re += needed * cosf(phase);
+                    spectrum[k0].im += needed * sinf(phase);
+                    fund_out = fund_in;
+                }
+
+                float prev_mag = fund_out;
+
+                // Even / odd harmonics: only for the active family, and only up to num_harmonics.
+                // Each harmonic must be at least half as loud as the previous one and not
+                // below its own input magnitude.
+                for (int h = 2; h <= num_harmonics; ++h)
                 {
                     int k = k0 * h;
-                    if (k > static_cast<int>(kNumBins)) break;
-                    float amount = (h & 1) ? odd_amount : even_amount;  // odd h -> odd_amount, even h -> even_amount
-                    float g = 1.0f + gains[h - 1] * amount;
-                    spectrum[k].re *= g;
-                    spectrum[k].im *= g;
+                    if (k > static_cast<int>(kNumBins))
+                        break;
+
+                    float family_amount = (h & 1) ? odd_amount : even_amount;
+                    if (family_amount <= 0.0f)
+                        continue; // this harmonic family is not active
+
+                    float in_mag  = mag_input[k];
+                    float out_mag = sqrtf(spectrum[k].re * spectrum[k].re
+                                         + spectrum[k].im * spectrum[k].im);
+
+                    float min_from_prev = 0.5f * prev_mag;
+                    float target_mag    = in_mag;
+                    if (target_mag < min_from_prev)
+                        target_mag = min_from_prev;
+
+                    if (target_mag > 0.0f && out_mag < target_mag)
+                    {
+                        float needed = target_mag - out_mag;
+                        float phase  = (out_mag > 0.0f)
+                            ? atan2f(spectrum[k].im, spectrum[k].re)
+                            : 0.0f;
+                        spectrum[k].re += needed * cosf(phase);
+                        spectrum[k].im += needed * sinf(phase);
+                        out_mag = target_mag;
+                    }
+
+                    prev_mag = out_mag;
                 }
             }
         }

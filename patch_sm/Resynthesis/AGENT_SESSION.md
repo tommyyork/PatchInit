@@ -112,3 +112,53 @@ Add algorithm effect by adapting algorithm for https://valleyaudio.github.io/rac
 **Agent response (summary)**  
 Created `Plateau.h`/`Plateau.cpp` implementing a `Plateau` wrapper around DaisySP’s `ReverbSc`, configured for a long, lush hall/plate (feedback ~0.92, LPF around 8 kHz). Integrated into `Resynthesis.cpp` with a `plateau_switch` on B_7. In the audio callback, when B_7 is off the resynth output remains fully dry; when B_7 is on, the signal is mixed 50/50 between dry and the Plateau wet output for both channels. The README was updated to document the B_7 behavior.
 
+---
+
+### 12. Rework algorithm for more musical, pitched results
+
+**User prompt**  
+The algorithm needs to be seriously reworked, as the generated outputs are not at all musical. Abstractly, an input of church bells ringing should result in a resynthesized bell sound that sounds perhaps ring modulated or frequency shifted, and grains should also be duplicated and frequency shifting to construct fundamentals and harmonics that match the note set by the v/oct input. How can we simplify and clean up the algorithm to start producing musical results again?
+
+**Agent response (summary)**  
+Analyzed the existing phase‑vocoder engine and proposed simplifying it into a clear model: use the input only as a spectral envelope, drive a clean harmonic stack locked to V/OCT through that envelope, and add optional ring‑mod/frequency‑shift as small, separate stages. Recommended stripping back sparsity/diffusion/fluff/feedback for a baseline mode where each grain is “harmonic stack × measured envelope”, explicitly tied to the requested fundamental, before reintroducing any more experimental behaviors.
+
+---
+
+### 13. Add minimal harmonic-stack engine and offline tests
+
+**User prompt**  
+Yes, draft a minimal replacement and put it in a separate file. Create those tests and have them output to a specific directory that reflects the output of this simplified algorithm.
+
+**Agent response (summary)**  
+Added `ResynthEngineHarmonic.h` with `SimpleHarmonicResynth`, a stripped‑down engine that analyzes the input into a smoothed magnitude envelope and synthesizes a harmonic stack at the V/OCT fundamental, multiplied by that envelope (no pitch‑shift of the original spectrum, no sparsity/diffusion/fluff/feedback). Created `test/test_resynth_harmonic.cpp` and wired new `make` targets so offline tests render held‑note and V/OCT‑sweep WAVs into `test/out/harmonic/` for easy A/B comparison with the full engine.
+
+---
+
+### 14. Enrich harmonic engine (more harmonics, denser grains)
+
+**User prompt**  
+The result sounds quiet and empty. I need a rich harmonic output. Add 100x the number of grains, randomize them. SetMaxHarmonics to 128. Multiply the number of grains by 10.
+
+**Agent response (summary)**  
+Iteratively increased the richness of `SimpleHarmonicResynth`: raised the default harmonic count and changed the rolloff to approximately \(1/\sqrt{h}\) with an overall gain boost, blended each spectral bin toward the mean to fill gaps from very sparse inputs, and added a post‑drive stage before soft clipping for louder perceived output. For the harmonic tests, drastically increased the grain pool (first 100×, then 10× more, later dialed back to a moderate 40) with strongly jittered launch times so many pitch‑locked harmonic grains overlap into a dense, randomized cloud.
+
+---
+
+### 15. Basic phase-vocoder resynthesis mode
+
+**User prompt**  
+Set the grains back to 40. This still sounds awful. Let's dial back all the extras, how about a basic resynthesis of the input sound using the phase vocoder style spectral analysis?
+
+**Agent response (summary)**  
+Reduced the harmonic test grain pool to 40 and added a `pure_resynth_mode_` flag and setter to `SimpleResynth` so it can bypass pitch‑locking and harmonic scaffolding. In this mode the engine simply reconstructs the spectrum from the shaped magnitudes and propagated phases (classic phase‑vocoder resynthesis). Updated the offline V/OCT test (`test_resynth_offline.cpp`) to enable `pure_resynth_mode` with neutral shaping, producing straightforward resynthesized versions of the input audio for a clean baseline.
+
+---
+
+### 16. Force pitch-lock for CV sweeps / FLUFF, restore reverb behavior
+
+**User prompt**  
+For the cv_sweep and fluff texts (with or without max comp), set mode_switch to true. Bring back the reverb algorithm when B8 is turned on - B7 should toggle both the max comp and reverb effect on.
+
+**Agent response (summary)**  
+Updated `test_resynth_cv_sweeps.cpp` so all CV sweep tests run with `SetPitchLockMode(true)`, matching the hardware’s PITCH LOCK (B_8 on) behavior; the FLUFF test already used pitch‑locked mode. In `Resynthesis.cpp`, re‑enabled the `Plateau` reverb and changed the routing so B_7 now toggles both MAX COMP and the reverb: when B_8 is on and B_7 is on, the compressed mono output is sent through `Plateau` and mixed 50/50 dry/wet to stereo; when B_7 is off, the output stays dry regardless of B_8, while B_8 alone still controls pitch‑lock vs partial‑based spectral mode.
+

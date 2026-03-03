@@ -166,6 +166,9 @@ def extract_holes(svg_path: Path) -> List[Hole]:
     for el in root.iter(f"{ns}rect"):
         if _inside_defs_or_pattern(el):
             continue
+        # Skip decorative label backgrounds and other non-mechanical rectangles.
+        if (el.get("data-panel-role") or "").strip().lower() == "label-bg":
+            continue
         x_attr = el.get("x")
         y_attr = el.get("y")
         w_attr = el.get("width")
@@ -212,6 +215,9 @@ def extract_screw_cutout_centers(svg_path: Path) -> List[tuple[float, float]]:
     centers: List[tuple[float, float]] = []
     for el in root.iter(f"{ns}rect"):
         if _inside_defs_or_pattern(el):
+            continue
+        # Skip decorative label backgrounds and other non-mechanical rectangles.
+        if (el.get("data-panel-role") or "").strip().lower() == "label-bg":
             continue
         fill = (el.get("fill") or "").strip().lower()
         if fill not in ("#000000", "black"):
@@ -415,7 +421,7 @@ def parse_patch_init_holes_from_kicad(kicad_path: Path) -> list[tuple[float, flo
             name_upper = fp_basename.upper()
             panel_diam: float | None
             if "9MM_SNAP-IN_POT" in name_upper:
-                panel_diam = 6.2
+                panel_diam = 6.35
             elif "S_JACK" in name_upper:
                 panel_diam = 6.3
             elif "TL1105" in name_upper:
@@ -933,7 +939,7 @@ def _render_panel_cutout_overlay_for_footprint(fp_basename: str) -> None:
     name_upper = fp_basename.upper()
     panel_diam: float | None
     if "9MM_SNAP-IN_POT" in name_upper:
-        panel_diam = 6.2
+        panel_diam = 6.35
     elif "S_JACK" in name_upper:
         panel_diam = 6.3
     elif "TL1105" in name_upper:
