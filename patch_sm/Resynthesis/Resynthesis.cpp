@@ -12,6 +12,7 @@
 #include "daisy_patch_sm.h"
 #include "daisysp.h"
 #include "Plateau.h"
+#include "ResynthEngine.h"
 
 #include <cmath>
 #include <cstdint>
@@ -19,6 +20,7 @@
 using namespace daisy;
 using namespace daisysp;
 using namespace patch_sm;
+using namespace resynth_engine;
 
 // ----------------------------------------------------------------------
 // Optional debug logging over JTAG/serial (enabled when DEBUG is set)
@@ -41,380 +43,15 @@ using namespace patch_sm;
 
 static inline float CvToBipolar(float v)
 {
-    // Daisy Patch SM CV inputs are bipolar -5..+5 V and exposed as 0..1.
-    // Map 0..1 -> -1..1 where -1 ≈ -5 V, 0 ≈ 0 V, +1 ≈ +5 V.
     return v * 2.0f - 1.0f;
 }
-
-// ----------------------------------------------------------------------
-// Simple complex type and FFT implementation (radix-2 Cooley-Tukey)
-// ----------------------------------------------------------------------
-
-struct Complex
-{
-    float re;
-    float im;
-};
-
-static void FftInPlace(Complex *data, size_t n, bool inverse)
-{
-    // Bit-reversal permutation
-    size_t j = 0;
-    for(size_t i = 1; i < n; ++i)
-    {
-        size_t bit = n >> 1;
-        while(j & bit)
-        {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j |= bit;
-        if(i < j)
-        {
-            Complex tmp = data[i];
-            data[i]     = data[j];
-            data[j]     = tmp;
-        }
-    }
-
-    // Cooley-Tukey stages
-    for(size_t len = 2; len <= n; len <<= 1)
-    {
-        float  ang   = 2.0f * static_cast<float>(M_PI) / static_cast<float>(len);
-        if(!inverse)
-            ang = -ang;
-        float   wlenRe = cosf(ang);
-        float   wlenIm = sinf(ang);
-        for(size_t i = 0; i < n; i += len)
-        {
-            float wRe = 1.0f;
-            float wIm = 0.0f;
-            for(size_t j2 = 0; j2 < len / 2; ++j2)
-            {
-                Complex u = data[i + j2];
-                Complex v;
-                v.re = data[i + j2 + len / 2].re * wRe
-                       - data[i + j2 + len / 2].im * wIm;
-                v.im = data[i + j2 + len / 2].re * wIm
-                       + data[i + j2 + len / 2].im * wRe;
-
-                data[i + j2].re = u.re + v.re;
-                data[i + j2].im = u.im + v.im;
-                data[i + j2 + len / 2].re = u.re - v.re;
-                data[i + j2 + len / 2].im = u.im - v.im;
-
-                // w *= wlen
-                float nextWRe = wRe * wlenRe - wIm * wlenIm;
-                float nextWIm = wRe * wlenIm + wIm * wlenRe;
-                wRe           = nextWRe;
-                wIm           = nextWIm;
-            }
-        }
-    }
-
-    // Scale for inverse transform
-    if(inverse)
-    {
-        float invN = 1.0f / static_cast<float>(n);
-        for(size_t i = 0; i < n; ++i)
-        {
-            data[i].re *= invN;
-            data[i].im *= invN;
-        }
-    }
-}
-
-// ----------------------------------------------------------------------
-// Phase-vocoder style resynthesizer
-// ----------------------------------------------------------------------
-
-static constexpr size_t kFftBits     = 8; // 2^8 = 256
-static constexpr size_t kFftSize     = 1 << kFftBits;
-static constexpr size_t kHopDenom    = 4;
-static constexpr size_t kHopSize     = kFftSize / kHopDenom;
-static constexpr size_t kNumBins     = kFftSize / 2;
-static constexpr size_t kNumGrains   = 4;
-static constexpr float  kTwoPi       = 2.0f * static_cast<float>(M_PI);
-
-struct Grain
-{
-    float  buffer[kFftSize];
-    size_t index;
-    bool   running;
-
-    void Start()
-    {
-        index   = 0;
-        running = true;
-    }
-
-    float Process()
-    {
-        if(!running)
-            return 0.0f;
-
-        float v = buffer[index];
-        ++index;
-        if(index >= kFftSize)
-        {
-            running = false;
-            index   = 0;
-        }
-        return v;
-    }
-};
-
-struct SimpleResynth
-{
-    float window[kFftSize];
-
-    float prev_phase[kNumBins + 1];
-    float synth_phase[kNumBins + 1];
-    float mag_smooth[kNumBins + 1];
-
-    bool  primed;
-    float mag_smooth_coeff;
-    float pitch_ratio;       // 1.f = unison, 2.f = +12st, 0.5f = -12st
-    float spectral_flatten;   // 0 = no change, 1 = fully flat
-    float bright_dark;       // -1 = dark, 0 = neutral, +1 = bright
-    float sparsity;          // 0 = full spectrum, 1 = only strongest bins
-    float phase_diffusion;   // 0 = coherent phase, 1 = noisy phase
-    float last_frame_spectral_energy;  // RMS of mag_smooth (0..1 scale), for CV_OUT_1
-
-    void Init()
-    {
-        // Hann window
-        for(size_t n = 0; n < kFftSize; ++n)
-        {
-            window[n] = 0.5f
-                        * (1.0f
-                           - cosf(kTwoPi * static_cast<float>(n)
-                                  / static_cast<float>(kFftSize - 1)));
-        }
-
-        for(size_t i = 0; i <= kNumBins; ++i)
-        {
-            prev_phase[i]  = 0.0f;
-            synth_phase[i] = 0.0f;
-            mag_smooth[i]  = 0.0f;
-        }
-        primed            = false;
-        mag_smooth_coeff  = 0.3f;
-        pitch_ratio       = 1.0f;
-        spectral_flatten  = 0.0f;
-        bright_dark       = 0.0f;
-        sparsity          = 0.0f;
-        phase_diffusion   = 0.0f;
-        last_frame_spectral_energy = 0.0f;
-    }
-
-    void SetSmoothing(float alpha)
-    {
-        mag_smooth_coeff = fclamp(alpha, 0.0f, 1.0f);
-    }
-
-    void SetPitchRatio(float ratio)
-    {
-        pitch_ratio = fclamp(ratio, 0.25f, 4.0f);
-    }
-
-    void SetSpectralFlatten(float amount)
-    {
-        spectral_flatten = fclamp(amount, 0.0f, 1.0f);
-    }
-
-    void SetBrightDark(float tilt)
-    {
-        bright_dark = fclamp(tilt, -1.0f, 1.0f);
-    }
-
-    void SetSparsity(float amount)
-    {
-        sparsity = fclamp(amount, 0.0f, 1.0f);
-    }
-
-    void SetPhaseDiffusion(float amount)
-    {
-        phase_diffusion = fclamp(amount, 0.0f, 1.0f);
-    }
-
-    static float PrincArg(float x)
-    {
-        // x is in cycles
-        x = x - floorf(x);
-        if(x > 0.5f)
-            x -= 1.0f;
-        return x;
-    }
-
-    static float RandUniform(float lo, float hi)
-    {
-        static uint32_t state = 1u;
-        state                 = state * 1664525u + 1013904223u;
-        float t = static_cast<float>(state & 0x00FFFFFFu)
-                  / static_cast<float>(0x01000000u);
-        return lo + (hi - lo) * t;
-    }
-
-    void StartGrainFromHistory(const float *history, size_t history_write_pos, Grain &grain)
-    {
-        // Build windowed frame from ring buffer into spectrum
-        Complex spectrum[kFftSize];
-
-        size_t idx = history_write_pos;
-        for(size_t n = 0; n < kFftSize; ++n)
-        {
-            float s = history[idx];
-            spectrum[n].re = s * window[n];
-            spectrum[n].im = 0.0f;
-            idx            = (idx + 1) % kFftSize;
-        }
-
-        FftInPlace(spectrum, kFftSize, false);
-
-        // Analysis and phase propagation (basic phase vocoder)
-        for(size_t k = 0; k <= kNumBins; ++k)
-        {
-            float re = spectrum[k].re;
-            float im = spectrum[k].im;
-
-            float mag   = sqrtf(re * re + im * im);
-            float phase = atan2f(im, re) / kTwoPi; // cycles
-
-            if(!primed)
-            {
-                prev_phase[k]  = phase;
-                synth_phase[k] = phase;
-                mag_smooth[k]  = mag;
-                continue;
-            }
-
-            float omega_bin      = static_cast<float>(k) / static_cast<float>(kFftSize);
-            float delta_expected = omega_bin * static_cast<float>(kHopSize);
-            float delta          = phase - prev_phase[k];
-            delta -= delta_expected;
-            delta = PrincArg(delta);
-
-            float omega_instant = omega_bin + delta / static_cast<float>(kHopSize);
-
-            // Magnitude smoothing roughly like SlewUp
-            mag_smooth[k] = mag_smooth[k]
-                            + mag_smooth_coeff * (mag - mag_smooth[k]);
-
-            synth_phase[k] = synth_phase[k] + omega_instant * static_cast<float>(kHopSize);
-            prev_phase[k]  = phase;
-        }
-
-        primed = true;
-
-        // --- Spectral shaping: flatten, bright/dark, sparsity, phase diffusion ---
-        float sum_mag = 0.0f;
-        float max_mag = 0.0f;
-        for(size_t k = 1; k < kNumBins; ++k)
-        {
-            sum_mag += mag_smooth[k];
-            if(mag_smooth[k] > max_mag)
-                max_mag = mag_smooth[k];
-        }
-        float mean_mag = sum_mag / static_cast<float>(kNumBins > 1 ? kNumBins - 1 : 1);
-
-        for(size_t k = 0; k <= kNumBins; ++k)
-        {
-            // Spectral flatten: blend toward equal magnitude
-            mag_smooth[k] = mag_smooth[k] * (1.0f - spectral_flatten)
-                            + mean_mag * spectral_flatten;
-            // Bright/dark tilt: gain proportional to bin index
-            float tilt_gain = 1.0f + bright_dark * (2.0f * static_cast<float>(k) / static_cast<float>(kNumBins) - 1.0f);
-            mag_smooth[k] *= fmaxf(tilt_gain, 0.01f);
-        }
-
-        // Sparsity: zero out bins below a threshold relative to the strongest bin
-        if(sparsity > 0.0f && max_mag > 0.0f)
-        {
-            float thresh = max_mag * (0.9f * sparsity); // higher sparsity -> fewer surviving bins
-            for(size_t k = 0; k <= kNumBins; ++k)
-            {
-                if(mag_smooth[k] < thresh)
-                    mag_smooth[k] = 0.0f;
-            }
-        }
-
-        // Phase diffusion: add random phase offsets, stronger at higher bins
-        if(phase_diffusion > 0.0f)
-        {
-            for(size_t k = 0; k <= kNumBins; ++k)
-            {
-                float w      = static_cast<float>(k) / static_cast<float>(kNumBins);
-                float amount = phase_diffusion * w; // cycles
-                float jitter = RandUniform(-amount, amount);
-                synth_phase[k] += jitter;
-            }
-        }
-
-        // Per-frame spectral energy (RMS of magnitudes) for CV_OUT_1
-        {
-            float sum_sq = 0.0f;
-            for(size_t k = 0; k <= kNumBins; ++k)
-                sum_sq += mag_smooth[k] * mag_smooth[k];
-            float rms = sqrtf(sum_sq);
-            float n   = static_cast<float>(kNumBins + 1);
-            last_frame_spectral_energy = (n > 0.0f) ? (rms / n) : 0.0f;
-        }
-
-        // --- Build output spectrum with pitch shift (bin remap) ---
-        for(size_t k_out = 0; k_out <= kNumBins; ++k_out)
-        {
-            float k_src_f = static_cast<float>(k_out) / pitch_ratio;
-            size_t lo     = static_cast<size_t>(k_src_f);
-            size_t hi     = lo + 1;
-            float  frac   = k_src_f - static_cast<float>(lo);
-
-            float mag_out, phase_out;
-            if(hi > kNumBins)
-            {
-                mag_out   = 0.0f;
-                phase_out = 0.0f;
-            }
-            else if(lo == 0 && hi == 1)
-            {
-                mag_out   = (1.0f - frac) * mag_smooth[0] + frac * mag_smooth[1];
-                phase_out = (1.0f - frac) * synth_phase[0] + frac * synth_phase[1];
-            }
-            else
-            {
-                mag_out   = (1.0f - frac) * mag_smooth[lo] + frac * mag_smooth[hi];
-                phase_out = (1.0f - frac) * synth_phase[lo] + frac * synth_phase[hi];
-            }
-
-            float out_phase = phase_out * kTwoPi;
-            spectrum[k_out].re = mag_out * cosf(out_phase);
-            spectrum[k_out].im = mag_out * sinf(out_phase);
-        }
-
-        // Reconstruct negative frequencies for a real IFFT
-        for(size_t k = 1; k < kNumBins; ++k)
-        {
-            spectrum[kFftSize - k].re = spectrum[k].re;
-            spectrum[kFftSize - k].im = -spectrum[k].im;
-        }
-
-        FftInPlace(spectrum, kFftSize, true);
-
-        // Window again and copy into grain buffer
-        for(size_t n = 0; n < kFftSize; ++n)
-        {
-            grain.buffer[n] = spectrum[n].re * window[n];
-        }
-        grain.Start();
-    }
-};
 
 // ----------------------------------------------------------------------
 // Daisy Patch SM integration
 // ----------------------------------------------------------------------
 
 DaisyPatchSM patch;
-Switch     cv_swap_switch;   // B_8: when pressed, swap CV_1..4 with CV_5..8
+Switch     cv_swap_switch;   // B_8: "MAX COMP" — when pressed, swap CV banks and use MAX COMP compressor mode (negative ratio, near-full volume, preserve dynamics)
 Switch     plateau_switch;   // B_7: toggle Plateau reverb dry/wet
 
 static SimpleResynth resynth;
@@ -430,6 +67,19 @@ static float  time_scale         = 1.0f;
 // One-pole smoothed spectral energy for CV_OUT_1 (0–1)
 static float  cv_energy_smooth   = 0.0f;
 static const float cv_energy_coeff = 0.002f;  // smoothing (~0.1s at 48kHz block rate)
+
+// Compressor: makes output louder and more consistent as a sound source for filter/amplitude
+// When "MAX COMP" switch (B_8) is engaged: negative ratio (Omnipressor-style), near-full volume, preserves dynamics/transients
+static float  comp_env           = 0.0f;
+static const float comp_thresh   = 0.25f;   // ~-12 dB, compress above this (normal mode)
+static const float comp_ratio    = 2.0f;    // 2:1 normal
+static const float comp_makeup   = 1.8f;    // make-up gain (normal)
+// MAX COMP mode (when B_8 engaged): negative ratio, higher makeup, boost below threshold
+static const float comp_thresh_max = 0.2f;   // slightly lower threshold
+static const float comp_ratio_max  = -2.0f; // negative ratio (Eventide Omnipressor style): tame peaks, boost quiet -> near full volume, preserve transients
+static const float comp_makeup_max = 2.6f;   // higher make-up so output is near full scale
+static const float comp_attack   = 0.0003f; // 0.3 ms
+static const float comp_release  = 0.05f;   // 50 ms
 
 #ifdef RES_DEBUG
 // Debug-logging cadence in audio samples (set from runtime sample rate)
@@ -461,7 +111,7 @@ static void PrintStartupStatus()
 
     RES_DEBUG_PRINTLN("Buttons / switches at startup:");
     RES_DEBUG_PRINTLN("B7 Plateau: %s", plateau_switch.Pressed() ? "ON" : "OFF");
-    RES_DEBUG_PRINTLN("B8 CV swap: %s", cv_swap_switch.Pressed() ? "PRESSED" : "RELEASED");
+    RES_DEBUG_PRINTLN("B8 MAX COMP: %s", cv_swap_switch.Pressed() ? "ON" : "OFF");
 }
 #endif
 
@@ -489,10 +139,11 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     cv_swap_switch.Debounce();
     plateau_switch.Debounce();
 
-    bool swap_cv = cv_swap_switch.Pressed();
+    bool swap_cv = cv_swap_switch.Pressed();   // "MAX COMP" switch: CV swap + compressor mode
     bool plateau_on = plateau_switch.Pressed();
+    bool max_comp_on = swap_cv;               // same switch: when engaged, compressor uses MAX COMP settings
 
-    // Read all 8 CVs; when B_8 is 1, swap bank CV_1..4 with CV_5..8
+    // Read all 8 CVs; when B_8 ("MAX COMP") is 1, swap bank CV_1..4 with CV_5..8
     float v1 = patch.GetAdcValue(CV_1);
     float v2 = patch.GetAdcValue(CV_2);
     float v3 = patch.GetAdcValue(CV_3);
@@ -511,9 +162,12 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     float sparsity_cv   = swap_cv ? v3 : v7;
     float diffusion_cv  = swap_cv ? v4 : v8;
 
-    // Normalize CV_5..CV_8 (and their swapped counterparts) to bipolar -1..1
-    // so that a physical range of -5 V .. +5 V is fully utilized and centered.
-    float voct_bi      = CvToBipolar(voct_cv);
+    // V/OCT: 0–10 V, 1 V/oct. 0 V = C0 (~16.35 Hz), 1 V = C1 (~32.7 Hz), 2 V = C2 (~65.4 Hz).
+    float voct_volts = voct_cv * 10.0f;
+    float fundamental_hz = 440.0f * powf(2.0f, voct_volts - 4.75f);
+    resynth.SetFundamentalHz(fundamental_hz, patch.AudioSampleRate());
+
+    // Normalize time/sparsity/diffusion (CV_6–CV_8) to bipolar -1..1 for -5 V .. +5 V
     float time_bi      = CvToBipolar(time_cv);
     float sparsity_bi  = CvToBipolar(sparsity_cv);
     float diffusion_bi = CvToBipolar(diffusion_cv);
@@ -523,18 +177,14 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     resynth.SetSpectralFlatten(fmap(flatten_knob, 0.0f, 1.0f));
     resynth.SetBrightDark(fmap(tilt_knob, -1.0f, 1.0f));
 
-    // Bipolar pitch CV on CV_5 (or its swapped input):
-    // -5 V .. +5 V ~= -60 .. +60 semitones around unison.
-    float semitones   = voct_bi * 60.0f;
-    float pitch_ratio = powf(2.0f, semitones / 12.0f);
-    resynth.SetPitchRatio(pitch_ratio);
-
     // Time-stretch / grain density: <1 = slower, >1 = denser
     // Map -5 V .. +5 V (~-1..1) to ~0.25x .. 4x around 1.0x using an exponential curve.
     time_scale = powf(2.0f, time_bi * 2.0f); // -1 -> 0.25, 0 -> 1.0, 1 -> 4.0
 
-    // Spectral sparsity and phase diffusion, centered at 0.5 when CV = 0 V
-    resynth.SetSparsity(0.5f * (sparsity_bi + 1.0f));   // -1..1 -> 0..1
+    // Sparsity and phase diffusion: restore a wide 0..1 range for strong, metallic effects.
+    // -5 V..+5 V (bipolar) is mapped back to 0..1 (0 V = 0.5), with internal energy
+    // preservation so the sound stays present even at extreme settings.
+    resynth.SetSparsity(0.5f * (sparsity_bi + 1.0f));       // -1..1 -> 0..1
     resynth.SetPhaseDiffusion(0.5f * (diffusion_bi + 1.0f)); // -1..1 -> 0..1
 
 #ifdef RES_DEBUG
@@ -566,9 +216,9 @@ void AudioCallback(AudioHandle::InputBuffer  in,
                           FLT_VAR3(flatten_amt),
                           FLT_VAR3(tilt_amt));
 
-        RES_DEBUG_PRINTLN("DBG: pitch_ratio=" FLT_FMT3 ", time_scale=" FLT_FMT3
+        RES_DEBUG_PRINTLN("DBG: V/OCT fundamental_hz=" FLT_FMT3 ", time_scale=" FLT_FMT3
                           ", sparsity=" FLT_FMT3 ", phase_diff=" FLT_FMT3,
-                          FLT_VAR3(pitch_ratio),
+                          FLT_VAR3(fundamental_hz),
                           FLT_VAR3(time_scale),
                           FLT_VAR3(sparsity_amt),
                           FLT_VAR3(diffusion_amt));
@@ -591,29 +241,77 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         ++total_samples_seen;
 
         // Launch new grains once we have a full buffer.
-        // Grain launch rate is controlled by time_scale.
+        // Grain launch rate is controlled by time_scale, with a bit of random
+        // jitter in the effective hop size so launches are not strictly on a
+        // grid (more alien / scattered texture).
         if(total_samples_seen >= kFftSize)
         {
             grain_phase += time_scale;
             while(grain_phase >= static_cast<float>(kHopSize))
             {
                 StartNextGrain();
-                grain_phase -= static_cast<float>(kHopSize);
+                // Jittered hop: around kHopSize with ±30% variation.
+                float hop       = static_cast<float>(kHopSize);
+                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.7f, 1.3f);
+                grain_phase -= hop * jitterMul;
             }
         }
 
-        // Sum all active grains (simple overlap-add)
+        // Sum all active grains (overlap-add), then normalize by active count so level is
+        // consistent whether 1 or several grains are playing (reduces volume variation).
         float wet = 0.0f;
+        size_t active_count = 0;
         for(size_t g = 0; g < kNumGrains; ++g)
         {
             if(grains[g].running)
+            {
                 wet += grains[g].Process();
+                ++active_count;
+            }
         }
+        if(active_count > 0)
+            wet *= 1.0f / (static_cast<float>(kHopDenom) * static_cast<float>(active_count));
 
-        // Normalize a bit to avoid clipping when several grains overlap
-        wet *= 1.0f / static_cast<float>(kHopDenom);
+        // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
+        float out_mono = (active_count > 0)
+            ? ((1.0f - drywet) * mono + drywet * wet)
+            : mono;
 
-        float out_mono = (1.0f - drywet) * mono + drywet * wet;
+        // Soft clip to reduce harsh peaks and further smooth level variation
+        float lim = 0.95f;
+        if (out_mono > lim)  out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
+        if (out_mono < -lim) out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
+
+        // Compressor: normal or "MAX COMP" (B_8) — MAX COMP uses negative ratio (Omnipressor-style) for near-full volume while preserving dynamics
+        float in_peak = fabsf(out_mono);
+        float env_coeff = (in_peak > comp_env) ? (1.0f - expf(-1.0f / (comp_attack * 48000.0f)))
+                                               : (1.0f - expf(-1.0f / (comp_release * 48000.0f)));
+        comp_env += env_coeff * (in_peak - comp_env);
+        float gain = 1.0f;
+        if (comp_env > 1e-6f)
+        {
+            float thresh = max_comp_on ? comp_thresh_max : comp_thresh;
+            float ratio  = max_comp_on ? comp_ratio_max  : comp_ratio;
+            float makeup = max_comp_on ? comp_makeup_max : comp_makeup;
+            if (max_comp_on)
+            {
+                // MAX COMP: negative ratio (Omnipressor-style). Below threshold: boost quiet (expansion). Above: compress peaks. Result: near full volume, dynamics preserved.
+                if (comp_env <= thresh)
+                    gain = powf(thresh / comp_env, 0.5f);  // boost below threshold so average level comes up
+                else
+                    gain = powf(thresh / comp_env, 1.0f - 1.0f / ratio);  // ratio < 0 -> exponent > 1, tame peaks
+            }
+            else
+            {
+                if (comp_env > thresh)
+                    gain = powf(thresh / comp_env, 1.0f - 1.0f / ratio);
+            }
+            gain *= makeup;
+        }
+        out_mono *= gain;
+        // Final soft clip after compressor (MAX COMP can push level high)
+        if (out_mono > lim)  out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
+        if (out_mono < -lim) out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
 
         // Plateau reverb: when B_7 is on, 50/50 dry/wet; when off, completely dry.
         float outL, outR;

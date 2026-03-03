@@ -1,0 +1,4 @@
+out/
+build/
+# Test output WAVs (CV sweeps, offline resynth)
+test/out/

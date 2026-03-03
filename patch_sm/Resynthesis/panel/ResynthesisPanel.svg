@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  Front-panel PCB artwork for the Resynthesis module (Patch.Init format).
+  Units: mm. Size: 3U x 10HP (128.5 x 50.8 mm).
+  All labels centered on their drill; jack labels above each jack.
+  Font: open-source DIN-style (see README). All text all caps.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="50.8mm"
+  height="128.5mm"
+  viewBox="0 0 50.8 128.5"
+>
+  <defs>
+    <style type="text/css">
+      .panel-text { font-family: Gidole, 'DIN Alternate', 'DIN 2014', sans-serif; }
+    </style>
+    <!-- Copper-only background patterns:
+         - Left: large broken squares
+         - Middle: debris/fragmented lines (letters washing off)
+         - Right: large broken circles
+         All strokes use a single copper colour with no fills or tones. -->
+
+    <!-- Left: large broken squares (rect only, no circles) -->
+    <pattern id="patternSquares" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="4" height="4"
+            fill="none"
+            stroke="#d4af37"
+            stroke-width="0.2"
+            stroke-dasharray="2 1" />
+    </pattern>
+
+    <!-- Middle: debris / falling fragments -->
+    <pattern id="patternDebris" width="4" height="4" patternUnits="userSpaceOnUse">
+      <!-- Short, staggered segments suggesting pieces falling off -->
+      <line x1="0.5" y1="0.4" x2="2.0" y2="0.4"
+            stroke="#d4af37"
+            stroke-width="0.18" />
+      <line x1="2.2" y1="1.4" x2="3.5" y2="1.4"
+            stroke="#d4af37"
+            stroke-width="0.18"
+            stroke-dasharray="0.6 0.4" />
+      <line x1="0.2" y1="2.1" x2="1.4" y2="2.7"
+            stroke="#d4af37"
+            stroke-width="0.18" />
+      <line x1="2.0" y1="2.8" x2="3.8" y2="3.2"
+            stroke="#d4af37"
+            stroke-width="0.18"
+            stroke-dasharray="0.4 0.6" />
+    </pattern>
+
+    <!-- Right: circle-like fragments built from short line segments (no <circle> elements) -->
+    <pattern id="patternCircles" width="4" height="4" patternUnits="userSpaceOnUse">
+      <!-- Four short chords hinting at a circle outline -->
+      <line x1="1.0" y1="0.8" x2="2.4" y2="0.6"
+            stroke="#d4af37"
+            stroke-width="0.2" />
+      <line x1="2.6" y1="1.0" x2="3.2" y2="2.0"
+            stroke="#d4af37"
+            stroke-width="0.2" />
+      <line x1="3.0" y1="2.6" x2="1.8" y2="3.2"
+            stroke="#d4af37"
+            stroke-width="0.2" />
+      <line x1="1.0" y1="3.0" x2="0.6" y2="1.8"
+            stroke="#d4af37"
+            stroke-width="0.2" />
+    </pattern>
+
+    <!-- Masks to grade the background from squares (left) through debris (middle) to circles (right).
+         Squares are present across the full panel; debris and circle fragments become denser toward the right. -->
+    <mask id="maskLeft">
+      <!-- Squares everywhere -->
+      <rect x="0" y="0" width="50.8" height="128.5" fill="white" />
+    </mask>
+    <mask id="maskMid">
+      <!-- Debris mainly in the centre, with a soft-edged, irregular band -->
+      <rect x="10" y="0" width="14" height="128.5" fill="white" />
+      <rect x="18" y="0" width="12" height="128.5" fill="white" />
+      <rect x="24" y="0" width="10" height="128.5" fill="white" />
+    </mask>
+    <mask id="maskRight">
+      <!-- Circle fragments sparse in the mid-right, dense at the far right -->
+      <rect x="26" y="0" width="8" height="128.5" fill="white" />
+      <rect x="32" y="0" width="10" height="128.5" fill="white" />
+      <rect x="38" y="0" width="12.8" height="128.5" fill="white" />
+    </mask>
+  </defs>
+
+  <rect x="0" y="0" width="50.8" height="128.5" fill="#050505" />
+  <!-- Background transition: squares -> debris -> circles (all rects full-size, sliced by masks) -->
+  <rect x="0" y="0" width="50.8" height="128.5" fill="url(#patternSquares)" mask="url(#maskLeft)" />
+  <rect x="0" y="0" width="50.8" height="128.5" fill="url(#patternDebris)" mask="url(#maskMid)" />
+  <rect x="0" y="0" width="50.8" height="128.5" fill="url(#patternCircles)" mask="url(#maskRight)" />
+  <rect x="0.15" y="0.15" width="50.5" height="128.2" fill="none" stroke="#d4af37" stroke-width="0.3" />
+
+  <!-- Title (above all drills) -->
+  <text x="25.4" y="8" class="panel-text" font-size="4" text-anchor="middle" fill="#ffffff">&#21270;</text>
+  <text x="25.4" y="13" class="panel-text" font-size="3.6" text-anchor="middle" fill="#f5e3a1">RESYNTHESIS</text>
+
+  <!-- Mounting holes -->
+  <circle cx="7.5" cy="3" r="1.5" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.1" cy="125.5" r="1.5" fill="none" stroke="#ffffff" stroke-width="0.2" />
+
+  <!-- SD card holder cutout (matches patch_init_gerbers/blank-Edge_Cuts.gbr) -->
+  <rect x="24.14" y="33.493" width="3.208" height="12.802" fill="none" stroke="#ffffff" stroke-width="0.2" />
+
+  <!-- Pots CV_1-CV_4 (7.2 mm) -->
+  <circle cx="11.176" cy="22.904" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="22.904" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="11.176" cy="42.027" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="42.027" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
+
+  <!-- Labels beneath pots row 1 (y >= 26.5), font 3.6 mm (>= 10 pt); clear of 12mm knob -->
+  <text x="11.176" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DRY / WET</text>
+  <text x="39.65" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">SMOOTH</text>
+
+  <!-- Labels beneath pots row 2 (y >= 45.6); clear of knob. CV_4 labeled COLOR -->
+  <text x="11.176" y="52" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">FLATTEN</text>
+  <text x="39.65" y="52" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">COLOR</text>
+
+  <!-- T2 LED; T3/T4 jacks and switches -->
+  <circle cx="25.4" cy="19.252" r="1.6" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="8.65" cy="59.288" r="2.75" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="25.503" cy="61.957" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="42.155" cy="59.288" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+
+  <!-- MAX COMP (8.65, 59.288): label beneath 62.04; when engaged, compressor uses negative-ratio (Omnipressor-style) for near-full volume while preserving dynamics -->
+  <text x="8.65" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">"MAX COMP"</text>
+
+  <!-- Plateau (42.155, 59.288): label beneath 62.39; slightly smaller font than other labels but >= 10 pt -->
+  <text x="42.155" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">PLATEAU</text>
+
+  <!-- 12 jacks: labels OVER each jack, centered. Top row (y=84.562) ? B10, B9, B5, B6 -->
+  <text x="7.15" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B10</text>
+  <text x="19.317" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B9</text>
+  <text x="31.483" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B5</text>
+  <text x="43.65" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B6</text>
+
+  <!-- Middle row (y=98.312) ? V/OCT, TIME, DENSITY, D (italic, diffusion) -->
+  <text x="7.15" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">V/OCT</text>
+  <text x="19.317" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">TIME</text>
+  <text x="31.483" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DENSITY</text>
+  <text x="43.65" y="93.3" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff" font-style="italic">D</text>
+
+  <!-- Bottom row (y=111.9) ? IN L, IN R, OUT L, OUT R -->
+  <text x="7.15" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">IN L</text>
+  <text x="19.317" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">IN R</text>
+  <text x="31.483" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT L</text>
+  <text x="43.65" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT R</text>
+
+</svg>

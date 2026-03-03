@@ -1,0 +1,4 @@
+test_resynth_offline
+test_resynth_cv_sweeps
+*_resynth_processed.wav
+out/

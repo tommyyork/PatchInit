@@ -14,3 +14,7 @@
 [submodule "patch_sm/Resynthesis/DaisySP"]
 	path = patch_sm/Resynthesis/DaisySP
 	url = https://github.com/electro-smith/DaisySP.git
+[submodule "VCVHARNESS/dep/Rack"]
+	path = VCVHARNESS/dep/Rack
+	url = https://github.com/VCVRack/Rack.git
+	branch = v2
