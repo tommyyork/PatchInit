@@ -18,3 +18,9 @@
 	path = VCVHARNESS/dep/Rack
 	url = https://github.com/VCVRack/Rack.git
 	branch = v2
+[submodule "patch_sm/Resynthesis/panel/gerbers"]
+	path = patch_sm/Resynthesis/panel/gerbers
+	url = https://github.com/JMC64/Daisy.Patch_sm
+[submodule "patch_sm/Resynthesis/patch_sm/Resynthesis/panel/gerbers"]
+	path = patch_sm/Resynthesis/patch_sm/Resynthesis/panel/gerbers
+	url = https://github.com/JMC64/Daisy.Patch_sm

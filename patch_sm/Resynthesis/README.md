@@ -10,22 +10,193 @@ The panel uses the single character **化** (*huà*) as its primary title, from 
 
 **Panel typography:** All panel text is set in **all caps** using the open-source DIN-style font **[Gidole](https://github.com/larsenwork/Gidole)** (OFL licence; also available via [Google Fonts](https://fonts.google.com/specimen/Gidole)). The SVG uses the `Gidole` font family with fallbacks (DIN Alternate, DIN 2014, sans-serif) so the panel renders correctly even if Gidole is not installed.
 
-## Controls (CV_1 – CV_8)
+## Make Targets
 
-- **CV_1 – Dry/Wet**: Crossfade between the original input (dry) and the resynthesized signal (wet). The parameter ranges from **100% dry** (input only) to **100% wet** (resynthesized only).
-- **CV_2 – Magnitude Smoothing**: Controls how quickly spectral magnitudes follow the input. Low values track transients closely; high values smear dynamics into pads. The engine’s **default** smoothing is around **0.4**, which tested as a good compromise between transient clarity and “pad‑like” musicality.
-- **CV_3 – Spectral Flatten**: Blends each bin’s magnitude toward the frame mean. Higher settings flatten the spectrum for more “noisy”/even energy.
-- **CV_4 – Bright/Dark Tilt**: Spectral tilt. Negative values emphasize low bins (darker), positive values emphasize high bins (brighter). Internally, tilt gain is clamped to a safe range so extreme settings do **not** drive the output into clipping or silence (as discovered in early `cv4_tilt` sweeps).
-- **CV_5 – V/OCT (0–10 V, 1 V/oct)**: Volt-per-octave pitch control. The algorithm uses available grains to build a fundamental at the frequency specified by the voltage (e.g. 1 V ≈ 32.7 Hz / C1, 2 V ≈ 65.4 Hz / C2) and reinforces the first, second, and third harmonics in decreasing volume so the module can be used as an oscillator in a bass patch. 0 V corresponds to C0 (~16.35 Hz); 10 V reaches the upper range (internally clamped for stability).
-- **CV_6 – Time‑Stretch / Grain Density (bipolar, -5 V to +5 V)**: Bipolar control around 1× time. Negative voltages slow down and smear the audio (down to roughly 0.25×), positive voltages increase grain density and motion (up to roughly 4×).
-- **CV_7 – Spectral Sparsity (bipolar, -5 V to +5 V)**: Bipolar control mapped to the full **0–1** sparsity range (0 V ≈ 0.5). Lower values keep most bins active and sound fuller; higher values keep only the strongest bins, leading to more pronounced, metallic / ring‑mod‑like spectra (with internal energy preservation so the result stays present rather than just “thin”).
-- **CV_8 – Phase Diffusion (bipolar, -5 V to +5 V)**: Bipolar control mapped to the full **0–1** diffusion range (0 V ≈ 0.5). Lower values keep phases more coherent (clearer tone); higher values introduce strong randomization for noisy, cloud‑like, frequency‑shift‑ish textures.
+- **`make` / `make all`**: Build everything for this project (no tests are run): `libDaisy`, `DaisySP`, the `Resynthesis` firmware, host test binaries in `test/`, panel preview PNGs, and the SVG/PDF block‑diagram documentation.
+- **`make program`**: Flash the built firmware image to the connected Daisy Patch SM.
+- **`make openocd`**: Start OpenOCD for JTAG/SWD debug sessions.
+- **`make debug`**: Build a debug firmware image and launch a GDB session against OpenOCD (with logging enabled as described below).
+- **`make panel`**: Generate high‑resolution PNG previews of the front‑panel art in `panel/ResynthesisPanel.png` and `panel/ResynthesisPanel_eurorack_overlay.png` (requires Inkscape).
+- **`make svg`**: Generate the US Letter block diagram of the audio path in `doc/Resynthesis_BlockDiagram_USLetter.pdf` and `doc/Resynthesis_BlockDiagram_USLetter.svg` (requires Graphviz `dot`).
+- **`make test_resynth`**: Build and run the offline V/OCT sweep test; outputs WAVs into `test/out/voct_sweep/`.
+- **`make test_cv_sweeps`**: Build and run the CV parameter sweep tests; outputs WAVs into `test/out/cv_sweep/` and `test/out/cv_sweep_maxcomp/`.
+- **`make test_panel`**: Run the panel alignment / mechanical checks in `panel/test_panel_alignment.py`.
+- **`make tests`**: Run the full test suite (`test_resynth`, `test_cv_sweeps`, and `test_panel`), regenerating WAVs under `test/out/`.
+- **`make clean`**: Remove build artifacts and generated assets for this project (host test binaries, `test/out` WAVs, panel PNGs, and block‑diagram PDF/SVG/DOT files).
 
-**Switch B_8 ("MAX COMP")**
-When the toggle on B_8 is flipped to 1, two things happen: (1) the two banks of CVs are swapped (parameters normally driven by CV_1–CV_4 are then driven by CV_5–CV_8, and vice versa); (2) the compressor switches to **MAX COMP** mode. In MAX COMP mode the compressor uses a **negative compression ratio** (Eventide Omnipressor–style): quiet sections are boosted and peaks are tamed so the output is **near full volume** while **preserving input dynamics and transients**. **V/OCT (CV_5) remains 0–10 V; the bipolar -5 V to +5 V scaling for CV_6–CV_8 is preserved regardless of which bank currently controls which parameter.**
+## Controls and panel mapping
 
-**Switch B_7 (Plateau reverb)**  
-Toggles a large-hall, plate-style reverb (implemented in `Plateau.cpp` using DaisySP’s `ReverbSc`). When B_7 is off, the output is completely dry (only the resynth signal). When B_7 is on, the signal is mixed 50/50 between dry and the Plateau reverb.
+This section is the **source of truth for panel labels and control behaviour**. Labels assume the **default CV bank** (no swapping).
+
+### Potentiometers (CV_1–CV_4)
+
+- **CV_1 – Dry/Wet (panel: `DRY / WET`)**  
+  Crossfade between the original input (dry) and the resynthesized signal (wet). The parameter ranges from **100% dry** (input only) to **100% wet** (resynthesized only).
+
+- **CV_2 – Magnitude Smoothing (panel: `SMOOTH`)**  
+  Controls how quickly spectral magnitudes follow the input. Low values track transients closely; high values smear dynamics into pads. The engine’s **default** smoothing is around **0.4**, which tested as a good compromise between transient clarity and “pad‑like” musicality.
+
+- **CV_3 – FLUFF – granular cloud depth (panel: `FLUFF`)**  
+  Sequentially enables a set of increasingly strong “cloud” behaviours in the grains. **Fully CCW** gives the most subtle, stable sound. As you turn clockwise, the engine adds:  
+  1. Extra frequency‑dependent phase diffusion on top of CV_8.  
+  2. Random jitter of the analysis window within each grain (time smearing) for a denser cloud.  
+  3. Micro‑pitch jitter per grain in **pitch‑locked mode** (a few cents of movement around the target note).  
+  4. Per‑bin magnitude jitter for a noisy, dense cloud at fully CW.  
+  Existing spectral‑energy normalization keeps level changes musical across settings.
+
+- **CV_4 – Color – bright/dark tilt & harmonic character (panel: `COLOR`)**  
+  Two roles:
+  - **Spectral tilt:** Negative values darken (emphasize low bins), positive values brighten (emphasize high bins); tilt gain is clamped so extremes do not clip or go silent.  
+  - **Harmonic character in partial‑based mode:** When V/OCT is in use and the engine is in **partial‑based mode** (B_8 off), **Color** selects which harmonic family is reinforced. **Fully CCW** → even harmonics (2nd, 4th, 6th); **fully CW** → odd harmonics (fundamental, 3rd, 5th). Reinforced partials use moderate gains so they **blend with the resynthesized body**.
+
+### Toggles (B_7, B_8)
+
+- **B_8 – PITCH LOCK (panel: `PITCH LOCK`)**  
+  Mode switch between **pitch‑locked grains** and a **partial‑based spectral model**:
+  - **B_8 off – Partial‑based / spectral model mode**: Treats the incoming spectrum as a timbral template. Analysis bins stay at their original pitch; a bank of harmonics tuned to the **V/OCT** fundamental is overlaid with moderate gain so simple inputs behave like a full synth voice. **Color (CV_4)** selects the balance of odd vs even harmonics.  
+  - **B_8 on – Pitch‑locked grains**: The phase‑vocoder pitch shifter locks each grain so its spectrum follows the V/OCT fundamental. This behaves more like a traditional pitched oscillator with the input acting as a complex waveform; harmonic reinforcement is disabled so the timbre is dominated by the pitch‑shifted grains themselves.
+
+- **B_7 – Reserved (panel: `RESERVED`)**  
+  Reverb is currently **disabled in firmware** (audio goes directly from the compressor to the outputs). B_7 is reserved for future features; flipping it has **no effect** in the current build.
+
+### CV inputs (CV_5–CV_8, middle jack row)
+
+The middle jack row (panel labels above the jacks) is:
+
+- `V/OCT`, `TIME`, `DENSITY`, *`D`* (italic D for diffusion)
+
+Mapped controls:
+
+- **CV_5 – V/OCT (panel: `V/OCT`, 0–10 V, 1 V/oct)**  
+  Volt‑per‑octave pitch control. In both modes the algorithm resynthesizes the input around a musical fundamental set by this voltage (e.g. 1 V ≈ 32.7 Hz / C1, 2 V ≈ 65.4 Hz / C2). In **pitch‑locked mode** (B_8 on) the *entire grain spectrum* is pitch‑shifted to follow V/OCT; in **partial‑based mode** (B_8 off) the original spectrum stays nearer its analyzed pitch while a harmonic scaffold (fundamental + harmonics) is overlaid at the V/OCT frequency. 0 V = C0 (~16.35 Hz); 10 V is internally clamped near the upper range.
+
+- **CV_6 – Time‑Stretch / Grain Density (panel: `TIME`, bipolar, -5 V to +5 V)**  
+  Bipolar control around 1× time. Negative voltages slow down and smear the audio (down to roughly 0.25×), positive voltages increase grain density and motion (up to roughly 4×).
+
+- **CV_7 – Spectral Sparsity (panel: `DENSITY`, bipolar, -5 V to +5 V)**  
+  Bipolar control mapped to the full **0–1** sparsity range (0 V ≈ 0.5). Lower values keep most bins active and sound fuller; higher values keep only the strongest bins, leading to more pronounced, metallic / ring‑mod‑like spectra, with internal energy preservation so results stay present rather than simply “thin”.
+
+- **CV_8 – Phase Diffusion (panel: italic `D`, bipolar, -5 V to +5 V)**  
+  Bipolar control mapped to the full **0–1** diffusion range (0 V ≈ 0.5). Lower values keep phases more coherent (clearer tone); higher values introduce strong randomization for noisy, cloud‑like, frequency‑shift‑ish textures. **FLUFF (CV_3)** can add extra diffusion on top of this control.
+
+### CV outputs (CV_OUT_1, CV_OUT_2)
+
+- **CV_OUT_1 / C10 – THOUGHTS (panel: `THOUGHTS`)**  
+  CV jack directly beneath the COLOR knob (top‑right of the middle‑switch/jack cluster).  
+  - **Signal:** A **smoothed spectral‑energy CV**, derived from the resynthesized spectrum (roughly RMS per grain, low‑pass filtered and scaled to 0–5 V). Louder, brighter, denser textures push THOUGHTS higher; sparse or dark material pulls it lower.  
+  - **Construction:** Internally, the engine measures the combined spectral energy of each grain after flatten/tilt/sparsity/diffusion, normalizes it against pre‑shaping energy, and runs it through a gentle one‑pole low‑pass so the output moves musically rather than sample‑accurately. The result behaves like an “internal listening meter” for the algorithm rather than a raw envelope follower tied only to input amplitude.  
+  - **Musical uses:** Because THOUGHTS changes at the rate of the underlying spectral motion (grain rate plus smoothing) rather than every sample, it works well as a **slow‑ to medium‑speed modulation source**: opening a filter or VCA as the texture blooms, driving waveshapers or FM indices when the spectrum gets dense, or clocking / modulating other modules so the rest of the patch “breathes” with the resynth engine. Fast transients still register, but long evolving pads produce long, expressive CV contours.
+
+- **CV_OUT_2 – secondary CV out (no dedicated panel label)**  
+  Electrically mirrors a second internal CV tap (e.g. for experiments or future firmware features). On the stock panel it shares one of the bottom‑row output jacks; see the jack mapping table below for the exact association. Current firmware focuses on **THOUGHTS (CV_OUT_1)** as the primary exposed modulation source.
+
+### Jacks: gates, CVs, and audio I/O
+
+Panel jack layout (from top row to bottom row; labels are **over** each jack and centered):
+
+- **Top row** (4 jacks): `B10`, `B9`, `B5`, `B6` — gate inputs/outputs.
+- **Middle row** (4 jacks): `V/OCT` (CV_5), `TIME` (CV_6), `DENSITY` (CV_7), *`D`* (CV_8, italic D).
+- **Bottom row** (4 jacks): `IN L`, `IN R`, `OUT L`, `OUT R` — stereo audio inputs and outputs. The two middle jacks are also **CV_OUT_1** and **CV_OUT_2** in firmware.
+
+### Stereo inputs and outputs
+
+- **IN L / IN R (bottom row, left two jacks; panel: `IN L`, `IN R`)**  
+  Audio inputs mapped to firmware channels `IN_L` and `IN_R`. They feed the analysis stage of the phase vocoder; typical use is a stereo source (e.g. a loop, synth, or external instrument).
+
+- **OUT L / OUT R (bottom row, right two jacks; panel: `OUT L`, `OUT R`)**  
+  Audio outputs mapped to firmware channels `OUT_L` and `OUT_R`. Carry the fully processed resynth signal after shaping, overlap‑add synthesis, soft clipping, and final compressor. Useful both as **effect returns** and as a standalone stereo sound source when driven from V/OCT.
+
+## Panel
+
+### Files
+
+- **`panel/ResynthesisPanel.svg`**  
+  Vector artwork of a 3U x 10HP Eurorack panel: height **128.5 mm**, width **50.8 mm**. All graphics and drill holes are in millimetres. **Generated by** `panel/generate_resynthesis_panel_svg.py`.
+
+- **`panel/ResynthesisPanel.jpg`**  
+  Single panel preview image for quick visual reference. Generated from `ResynthesisPanel.svg` by `make panel` (requires Inkscape). The SVG is the source of truth and must pass the panel tests first.
+
+- **`panel/render_eurorack_overlay.py`**  
+  Script that generates an **Eurorack standard overlay** SVG from any panel SVG: green dotted 2HP vertical grid, neon blue dotted rail‑center lines, neon pink (x, y) annotations at each cut center plus panel dimensions.
+
+- **`panel/generate_resynthesis_panel_svg.py`**  
+  Python script that **generates the canonical `ResynthesisPanel.svg`**. It encodes the full 3U × 10HP geometry, background artwork, all drill centres, the SD card holder cutout, and the four rectangular Eurorack mounting screw slots so they line up with the Doepfer / Gie‑Tec rail standard (3 mm from the top and bottom edges; see `panel/eurorack_spec/README.md`).
+
+### Input / jack mapping (KiCad PCB → panel)
+
+The table below ties together the **Resynthesis panel labels**, the **Patch.Init default panel silkscreen**, the **KiCad schematic references**, and the mechanical information from the KiCad footprints. Positions are given in KiCad PCB coordinates (millimetres) taken from `panel/KiCad_PCB/ES_Daisy_Patch_SM_FB_Rev1.kicad_pcb`.
+
+| Resynthesis label | Patch.Init panel label | Component type | Panel hole Ø (mm) | PCB X (mm) | PCB Y (mm) | KiCad schematic ref |
+|-------------------|------------------------|----------------|-------------------|------------|------------|----------------------|
+| B10 (gate in 1)   | B10                    | S_JACK         | ≈ 6.3             | 130.251    | 125.316    | J_GATEIN1            |
+| B9 (gate in 2)    | B9                     | S_JACK         | ≈ 6.3             | 142.418    | 125.316    | J_GATEIN2            |
+| B5 (gate out 1)   | B5                     | S_JACK         | ≈ 6.3             | 154.584    | 125.316    | J_GATEOUT1           |
+| B6 (gate out 2)   | B6                     | S_JACK         | ≈ 6.3             | 166.751    | 125.316    | J_GATEOUT2           |
+| V/OCT             | CV_5                   | S_JACK         | ≈ 6.3             | 130.251    | 139.065    | J_CV1                |
+| TIME              | CV_6                   | S_JACK         | ≈ 6.3             | 142.418    | 139.065    | J_CV2                |
+| DENSITY           | CV_7                   | S_JACK         | ≈ 6.3             | 154.584    | 139.065    | J_CV3                |
+| D (diffusion)     | CV_8                   | S_JACK         | ≈ 6.3             | 166.751    | 139.065    | J_CV4                |
+| IN L              | IN_L / B4              | S_JACK         | ≈ 6.3             | 130.251    | 152.654    | J_LIN1               |
+| IN R              | IN_R / B3              | S_JACK         | ≈ 6.3             | 142.418    | 152.654    | J_RIN1               |
+| OUT L             | OUT_L / B2             | S_JACK         | ≈ 6.3             | 154.584    | 152.654    | J_LOUT1              |
+| OUT R             | OUT_R / B1             | S_JACK         | ≈ 6.3             | 166.751    | 152.654    | J_ROUT1              |
+| THOUGHTS          | CV_OUT_1 / C10         | S_JACK         | ≈ 6.3             | 165.251    | 100.036    | J_CVOUT1             |
+
+For all jacks, the panel hole diameter is derived from the **S_JACK** KiCad footprint by measuring the outer silkscreen circle at the footprint origin, which reflects the mechanical body / shaft size of the jack that the panel must clear.
+
+### Manufacturing notes
+
+- The SVG uses **mm** for size and coordinates. Most PCB CAD tools can import this as a mechanical layer to generate Gerbers for:
+  - Board outline (the outer rectangle)
+  - Drill holes (circle centres and radii for jacks, knobs, switches, and mounting holes)
+  - **SD card holder cutout** (rectangular cutout matching Patch.Init Edge_Cuts)
+  - Silkscreen (text and decorative shapes)
+- For a PCB front panel:
+  - Use at least **1.6 mm** FR4 for stiffness (or thicker if desired).
+  - Put the artwork on the **front silkscreen** and any copper artwork on the **front copper** layers as desired.
+  - Make sure to align the drill centres with your chosen hardware footprints (jacks, pots, switches) in your CAD tool before fabrication.
+
+### Panel drill alignment and tests
+
+Earlier iterations of this panel were laid out by eye against the hardware, which meant the **drill locations and diameters did not exactly match** the stock Electrosmith Patch.Init front panel.
+
+The current `panel/ResynthesisPanel.svg` has been revised so that:
+
+- The board outline is **50.8 × 128.5 mm** (10HP × 3U), matching `panel/patch_init_gerbers/blank-Edge_Cuts.gbr`.
+- There are **exactly 22 drill holes**, matching the non‑plated NPTH tools in `panel/patch_init_gerbers/blank-NPTH.drl`:
+  - 2 × 3.0 mm mounting holes (implemented on the panel as four wide rectangular screw slots whose equivalent 3.0 mm drill centres match the Patch.Init NPTH file and sit 3 mm from the top and bottom edges, per the Eurorack rail standard),
+  - 1 × 3.2 mm (T2),
+  - 2 × 5.5 mm (T3) for switches,
+  - 13 × 6.2 mm (T4) for jacks,
+  - 4 × 7.2 mm (T5) for potentiometer shafts.
+- A rectangular **SD card holder cutout** is present and matches `panel/patch_init_gerbers/blank-Edge_Cuts.gbr` (position and size within 0.1 mm).
+- Hole positions and diameters are matched within **0.05 mm** to the NPTH drill file.
+
+The helper script `panel/test_panel_alignment.py` enforces that any panel design passes the tests. Key tests:
+
+- **`test_panel_drill_holes_match_patch_init`** – Verifies that the canonical panel SVG has drill hole positions and diameters identical to `blank-NPTH.drl` (tight tolerances).  
+- **`test_custom_panels_align_with_canonical`** – Any alternate `ResynthesisPanel_*.svg` must share the same hardware hole layout as the canonical panel.  
+- **`test_canonical_panel_dimensions_and_diameters`** – Checks dimensions, viewBox, and internal consistency of hole radii; confirms Patch.Init PTH drill file is metric.  
+- **`test_panel_cutouts_four_pots_switches_and_sd_slot_match_patch_init`** – Confirms pot, switch, and SD‑slot cutouts are present and aligned with the Patch.Init module.  
+- **`test_screw_holes_eurorack_rail_distance`** – Verifies that rectangular screw slots are 3 mm from top and bottom edges (Eurorack rails).  
+- **`test_panel_passes_pcbway_style_validation`** – Runs PCBWay‑style mechanical checks (min hole size, spacing, hole‑to‑edge, board dimensions).  
+- **`test_knob_labels_not_obscured_by_rogan_knobs`** – Ensures Rogan‑style knobs (12 mm) with 0.5 mm clearance do not cover the primary labels (`DRY / WET`, `SMOOTH`, `FLUFF`, `BRIGHT /`).  
+- **`test_no_overlapping_text`**, **`test_text_within_printed_area`**, **`test_no_font_smaller_than_10pt`**, **`test_labels_beneath_drill_centered`** – Typography/layout guards so the panel remains legible and mechanically sane.
+
+### External references and expected file formats
+
+External mechanical references and design rules:
+
+- **Eurorack / Doepfer A-100 mechanical standard** – summarized in `panel/eurorack_spec/README.md` (mounting hole positions, panel height, links to Doepfer and other docs).  
+- **Patch.Init blank front‑panel Gerbers** – including `blank-NPTH.drl` and `blank-Edge_Cuts.gbr`, used as the mechanical reference.  
+- **PCBWay design‑rule documentation** – sets conservative minimums for hole size, spacing, and hole‑to‑edge clearance, as enforced by the tests.
+
+Expected file formats:
+
+- `panel/ResynthesisPanel.svg` – single source of truth for the mechanical and graphic layout of the panel (mm units).  
+- `panel/patch_init_gerbers/*.drl` / `*.gbr` – reference drill and outline Gerbers.  
+- `panel/ResynthesisPanel.jpg` – panel preview generated from the SVG by `make panel`.  
+- `panel/ResynthesisPanel_eurorack_overlay.svg` – Eurorack overlay from `render_eurorack_overlay.py` (same viewBox as panel; stack in Inkscape for HP grid, rail centers, and cut annotations).
 
 ## Instructions
 
@@ -55,31 +226,41 @@ Toggles a large-hall, plate-style reverb (implemented in `Plateau.cpp` using Dai
    - Prints the startup values of all CV_1–CV_8 inputs and the states of switches B_7 and B_8.
    - Periodically prints diagnostic information while audio runs (active grains, spectral energy, current control values, etc.) over the JTAG/serial link.
 
-5. **Run offline test (optional)**:
-   - **Purpose:** The test runs the phase vocoder resynthesis so that the **output length equals the duration of the V/OCT CV movement**: **14 quarter notes at 120 BPM** (7 seconds). The input is truncated or zero-padded to exactly that length, so one output file reflects the full pitch movement. A simulated **V/OCT CV** (0–10 V) steps **once per quarter note** through **two diatonic octaves** (14 steps: 0 V through ~2 V in 1/7 V steps, then scaled to the same diatonic scale). **Dry/wet is fixed at 100% wet** (output is resynthesized only; no dry mix). Other parameters use **musical defaults** chosen through listening tests: smoothing ≈ **0.4**, flatten = 0, tilt = 0, sparsity ≈ **0.2**, diffusion ≈ **0.2**, time scale = 1.0. Output is written to `test/out/<basename>_resynth_processed.wav` (e.g. `test/out/church_bells_resynth_processed.wav`).
-   - **Test input sample:** Place a **royalty-free** WAV at `test/samples/church_bells.wav`. The test runs from the Resynthesis directory via `make tests`; the binary loads `samples/church_bells.wav` (i.e. this file).
-     - **Format:** WAV, 48 kHz (mono or stereo).
-     - **Suggested source:** [BBC Sound Effects](https://sound-effects.bbcrewind.co.uk/) — search for “church bells” (or “bells”, “cathedral”); download a clip and convert to 48 kHz WAV if needed. BBC Sound Effects are made available under the [RemArc licence](https://sound-effects.bbcrewind.co.uk/licensing) for personal, educational or research use.
-   - From the project root:
+5. **Run offline V/OCT test (optional)**:
+   - **Purpose:** The test runs the phase vocoder resynthesis so that the **output length equals the duration of the V/OCT CV movement**: **14 quarter notes at 120 BPM** (7 seconds). The input is truncated or zero-padded to exactly that length. A simulated **V/OCT CV** (0–10 V) steps **once per quarter note** through **two diatonic octaves** (14 steps). **Dry/wet is fixed at 100% wet**. Other parameters use **musical defaults** (smoothing ≈ 0.4, flatten = 0, tilt = 0, sparsity ≈ 0.2, diffusion ≈ 0.2, time scale = 1.0).
+   - **Samples:** Place **48 kHz** WAV(s) in `test/samples/`. The test runs for **every WAV** in that folder (no fixed filenames). Outputs go to **`test/out/voct_sweep/`** with names **`<basename>_voct_sweep.wav`** (e.g. `church_bells_voct_sweep.wav`, `synth_bassline_voct_sweep.wav`).
+   - From the Resynthesis (project) root:
+     ```bash
+     make test_resynth
+     ```
+     Or run both offline and CV sweep tests:
      ```bash
      make tests
      ```
-   - **V/OCT CV movement:** The test drives the resynth’s pitch as a volt-per-octave CV (0–10 V) that steps every quarter note at 120 BPM across **two octaves in one pass**: quarter 1 = 0 V (C0), quarter 2 = +2 semitones, …, quarter 8 = +12 st (first octave), quarter 9 = +14 st, …, quarter 14 = +23 st (second octave). The processed sample length is exactly 14/4 at 120 BPM (7 s), so the output file clearly shows this pitch movement in a single file.
-   - If you use a sample that requires attribution, add it to the **Attribution** section below.
+   - **V/OCT CV movement:** The test drives the resynth’s pitch as a volt-per-octave CV (0–10 V) that steps every quarter note at 120 BPM across **two octaves in one pass** (7 s). If you use a sample that requires attribution, add it to the **Attribution** section below.
 
 6. **Run CV parameter sweep test (optional)**:
-   - **Purpose:** Process the same input (e.g. church bells) once per CV parameter, sweeping that parameter while keeping the others at neutral. Dry/wet is swept 0% → 100% wet **only** in the first test; all other sweeps run at 100% wet. **Default V/OCT is 2 V (C2)** for all sweeps except the V/OCT test. Produces **8 WAVs** in `test/out/`, each named for the parameter under test:
-     - `church_bells_cv1_drywet.wav` — dry/wet 0% → 100% wet
-     - `church_bells_cv2_smoothing.wav` — magnitude smoothing 0 → 1 (engine default ≈ 0.4)
-     - `church_bells_cv3_flatten.wav` — spectral flatten 0 → 1
-     - `church_bells_cv4_tilt.wav` — bright/dark tilt -1 → 1 (with internal tilt gain clamped to avoid clipping/silence)
-     - `church_bells_cv5_voct.wav` — V/OCT linear sweep 1 V → 4 V over **30 s** (looped 220 Hz sine; output duration 30 s)
-     - `church_bells_cv6_timestretch.wav` — time stretch 0.25× → 4×
-     - `church_bells_cv7_sparsity.wav` — spectral sparsity sweep 0 → 1
-     - `church_bells_cv8_phase_diffusion.wav` — phase diffusion sweep 0 → 1
-   - Uses the same input as the offline test (`samples/church_bells.wav`). From the Resynthesis root:
+   - **Purpose:** For each CV parameter, process the input with that parameter swept and the others at neutral. Dry/wet is swept 0% → 100% wet **only** in the first test; all other sweeps run at 100% wet. **Default V/OCT is 2 V (C2)** for all sweeps except the V/OCT test. **Two output directories** are used:
+     - **`test/out/cv_sweep/`** — CV sweeps **without** MAX COMP. One file per parameter per sample: `<basename>_cv1_drywet.wav`, `<basename>_cv2_smoothing.wav`, … `<basename>_cv8_phase_diffusion.wav`.
+     - **`test/out/cv_sweep_maxcomp/`** — Same sweeps **with** MAX COMP on; each output is checked to have average level **> -60 dBFS**.
+   - **Samples:** Same as the offline test: **every 48 kHz WAV** in `test/samples/` is processed (e.g. `church_bells.wav`, `synth_bassline.wav`). Output names: **`<basename>_cv1_drywet.wav`**, **`<basename>_cv2_smoothing.wav`**, **`<basename>_cv3_flatten.wav`**, **`<basename>_cv4_tilt.wav`**, **`<basename>_cv5_voct.wav`** (V/OCT 1 V→4 V over 30 s), **`<basename>_cv6_timestretch.wav`**, **`<basename>_cv7_sparsity.wav`**, **`<basename>_cv8_phase_diffusion.wav`**.
+   - From the Resynthesis root:
      ```bash
      make test_cv_sweeps
+     ```
+     Or run as part of `make tests`.
+
+7. **Run FLUFF granular test (optional)**:
+   - **Purpose:** Demonstrate how the **FLUFF** control changes the granular cloud while V/OCT plays a scale. For each 48 kHz WAV in `test/samples/`, the test plays a **diatonic scale from 2 V to 3 V** (one octave, major scale) and renders **five passes**, one for each FLUFF combination:
+     - `combo0` — FLUFF off (baseline, no extra stages)
+     - `combo1` — Stage 1 only (extra phase diffusion)
+     - `combo2` — Stages 1–2 (add analysis‑window jitter)
+     - `combo3` — Stages 1–3 (add micro‑pitch jitter in pitch‑locked mode)
+     - `combo4` — Stages 1–4 (full granular cloud, including per‑bin magnitude jitter)
+   - Outputs go to **`test/out/fluff/`** with names **`<basename>_fluff_combo{0..4}.wav`**.
+   - From the Resynthesis root:
+     ```bash
+     make test_fluff
      ```
      Or run as part of `make tests`.
 
@@ -92,12 +273,23 @@ Toggles a large-hall, plate-style reverb (implemented in `Plateau.cpp` using Dai
 - **Grain overlap normalization and soft clip**: Wet grains are normalized by the number of active grains plus hop size so the overall level stays similar whether 1 or several grains overlap. A gentle soft clip on the output catches remaining peaks without harsh distortion, again aiming for a more stable and musical perceived loudness.
 - **Fixed compressor (last stage)**: After the soft clip, a feedforward compressor with fixed settings runs so the output is **louder and more consistent** as a sound source for a filter and amplitude (e.g. VCF/VCA). Threshold ≈ -12 dB, ratio 2:1, fast attack (~0.3 ms), medium release (~50 ms), and make-up gain so the resynthesized signal sits at a useful level. This avoids the need to crank downstream gain and evens out dynamics so the module works well as an oscillator or texture source. *Alternative considered:* updating the algorithm so output volume closely follows input volume (e.g. envelope-following gain on the wet path); the compressor was chosen for fixed behaviour, predictable level, and one less dependency on input dynamics.
 - **Grain launch jitter (“spray”)**: Grain launch timing is dithered around the nominal hop size (±30%), both on hardware and in the offline / CV sweep tests. This breaks the perfectly regular launch grid so grains overlap in a more scattered, “alien” way while still roughly tracking the requested time‑stretch factor.
+-
+- **FLUFF (granular cloud depth)**:
+  - The **FLUFF** control is implemented as **four sequential stages**, each adding more granular character while preserving overall level via existing spectral‑energy normalization:
+    1. **Extra phase diffusion**: Adds a small, frequency‑dependent phase randomisation on top of CV_8, starting subtly at low FLUFF settings. This softens phase coherence and reduces small pops without washing out the spectrum.
+    2. **Analysis‑window jitter**: Shifts each grain’s FFT window slightly forward/backward in the rolling input history. This creates time‑smeared grains and a denser “cloud” from the same source material.
+    3. **Micro‑pitch jitter (pitch‑locked mode only)**: In pitch‑locked mode (B_8 on), each grain’s pitch ratio is perturbed by a few cents (amount grows with FLUFF). The result is a shimmering, animated cluster around the nominal V/OCT pitch while remaining clearly in tune.
+    4. **Per‑bin magnitude jitter**: At high FLUFF settings, small random gain variations are applied per spectral bin before synthesis (with energy preservation and clamps). This adds a noisy, granular halo to the sound, especially obvious with sustained inputs.
+
+- **Pitch‑locked vs partial‑based modes**: The phase‑vocoder engine exposes a simple mode flag:
+  - **Pitch‑locked grains (B_8 on):** The global pitch ratio is applied to all bins so grains follow V/OCT directly; harmonic reinforcement is disabled for a pure “pitch‑corrected grains” behaviour.
+  - **Partial‑based / spectral model (B_8 off):** The original spectrum remains at its analysed pitch; a small harmonic bank tuned to the V/OCT fundamental (with odd/even balance from **Color**) is multiplied into the spectrum, turning simple sources into full, harmonically rich synth voices.
 
 ## Attribution (test audio)
 
-The offline test (`make tests`) uses an input audio file that you provide at `test/samples/church_bells.wav`. If you use a royalty-free sample that requires attribution, add it here. Example for BBC content:
+The tests use input WAV(s) from `test/samples/`. If you use royalty-free samples that require attribution, add them here. Example for BBC content:
 
 - **Test input sample:** *Church bells* from [BBC Sound Effects](https://sound-effects.bbcrewind.co.uk/), © BBC, used under the [RemArc licence](https://sound-effects.bbcrewind.co.uk/licensing). Used as input to the phase vocoder resynthesis in this project’s test suite.
 
-**Current test sample (fallback):** Church bells from [Soundcamp.org](https://soundcamp.org/sound-effects/church-bells-sound-wav), resampled to 48 kHz mono. You may replace with a BBC Sound Effects clip (search “church bells” at [sound-effects.bbcrewind.co.uk](https://sound-effects.bbcrewind.co.uk/)) for RemArc-licensed content.
+**Suggested source:** [BBC Sound Effects](https://sound-effects.bbcrewind.co.uk/) — search for “church bells”, “bells”, or “cathedral”; download a clip and convert to 48 kHz WAV if needed. BBC Sound Effects are made available under the [RemArc licence](https://sound-effects.bbcrewind.co.uk/licensing) for personal, educational or research use. Place 48 kHz WAV(s) in `test/samples/`; the tests run for every WAV in that folder.
 

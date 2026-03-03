@@ -1,0 +1,301 @@
+// Offline test: FLUFF stages with diatonic V/OCT scale.
+// For each input WAV in test/samples/, plays a diatonic scale from 2 V to 3 V
+// (one octave, major scale) and renders one pass for each FLUFF combination:
+// 0, 1, 1+2, 1+2+3, 1+2+3+4.
+//
+// Output: out/fluff/{basename}_fluff_combo{0..4}.wav
+//
+// Combo meaning (matches README description):
+//   0: FLUFF off (baseline)
+//   1: Stage 1 only: extra phase diffusion
+//   2: Stages 1–2: + analysis-window jitter
+//   3: Stages 1–3: + micro‑pitch jitter (pitch‑locked mode)
+//   4: Stages 1–4: + per‑bin magnitude jitter (full granular cloud)
+
+#include "../ResynthEngine.h"
+#include "wav_io.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#include <io.h>
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <dirent.h>
+#endif
+
+static constexpr unsigned kSampleRate = 48000;
+static constexpr float    kBpm        = 120.0f;
+
+// One diatonic octave (major scale) from 2 V to 3 V: 8 steps, one per quarter note.
+static const int   kDiatonicOneOctave[] = {0, 2, 4, 5, 7, 9, 11, 12};
+static const size_t kNumSteps           = sizeof(kDiatonicOneOctave) / sizeof(kDiatonicOneOctave[0]);
+static constexpr unsigned kSamplesPerStep
+    = (unsigned)(kSampleRate * 60.0f / kBpm + 0.5f); // one quarter note at 120 BPM
+static constexpr size_t kNumFrames
+    = (size_t)(kSamplesPerStep * kNumSteps);
+
+static const char kOutFluffDir[] = "out/fluff";
+
+struct FluffSetting
+{
+    const char* name;
+    float       fluff_value;
+};
+
+// Choose FLUFF values that map cleanly onto 0..4 active stages in the engine.
+static const FluffSetting kFluffSettings[] = {
+    {"combo0", 0.0f},  // 0 stages
+    {"combo1", 0.30f}, // 1 stage
+    {"combo2", 0.55f}, // 2 stages
+    {"combo3", 0.80f}, // 3 stages
+    {"combo4", 1.00f}, // 4 stages
+};
+static const size_t kNumFluffSettings = sizeof(kFluffSettings) / sizeof(kFluffSettings[0]);
+
+static std::vector<std::string> discover_wav_files(const char* dir)
+{
+    std::vector<std::string> out;
+#ifdef _WIN32
+    std::string pattern = std::string(dir) + "\\*.wav";
+    struct _finddata_t fd;
+    intptr_t h = _findfirst(pattern.c_str(), &fd);
+    if (h == -1)
+        return out;
+    do
+    {
+        if (!(fd.attrib & _A_SUBDIR) && strstr(fd.name, ".wav"))
+            out.push_back(std::string(dir) + "/" + fd.name);
+    } while (_findnext(h, &fd) == 0);
+    _findclose(h);
+#else
+    DIR* d = opendir(dir);
+    if(!d)
+        return out;
+    struct dirent* e;
+    while((e = readdir(d)) != nullptr)
+    {
+        size_t len = strlen(e->d_name);
+        if(len > 4 && strcmp(e->d_name + len - 4, ".wav") == 0)
+            out.push_back(std::string(dir) + "/" + e->d_name);
+    }
+    closedir(d);
+#endif
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+static bool process_one_file_with_fluff(const char* inputPath)
+{
+    std::vector<float> inputSamples;
+    WavInfo            info;
+    if(!LoadWav(inputPath, inputSamples, info))
+    {
+        fprintf(stderr, "Skip %s (not a WAV or unreadable).\n", inputPath);
+        return false;
+    }
+    if(info.sampleRate != kSampleRate)
+    {
+        fprintf(stderr, "Skip %s (expected %u Hz, got %u).\n", inputPath, kSampleRate, info.sampleRate);
+        return false;
+    }
+
+    size_t              numFramesIn = info.numFrames;
+    std::vector<float>  mono(kNumFrames);
+    if(info.numChannels == 1)
+    {
+        for(size_t i = 0; i < kNumFrames; ++i)
+            mono[i] = i < numFramesIn ? inputSamples[i] : 0.0f;
+    }
+    else
+    {
+        for(size_t i = 0; i < kNumFrames; ++i)
+        {
+            if(i < numFramesIn)
+                mono[i] = 0.5f * (inputSamples[i * 2] + inputSamples[i * 2 + 1]);
+            else
+                mono[i] = 0.0f;
+        }
+    }
+
+    const char* path      = inputPath;
+    const char* lastSlash = strrchr(path, '/');
+    const char* base      = lastSlash ? (lastSlash + 1) : path;
+    const char* lastDot   = strrchr(base, '.');
+    size_t      baseLen   = lastDot ? (size_t)(lastDot - base) : strlen(base);
+    char        out_basename[256];
+    snprintf(out_basename, sizeof(out_basename), "%.*s", (int)baseLen, base);
+
+    using namespace resynth_engine;
+
+    for(size_t f = 0; f < kNumFluffSettings; ++f)
+    {
+        const FluffSetting& fs = kFluffSettings[f];
+
+        SimpleResynth resynth;
+        Grain         grains[kNumGrains];
+        resynth.Init();
+        for(size_t g = 0; g < kNumGrains; ++g)
+        {
+            grains[g].running = false;
+            grains[g].index   = 0;
+        }
+
+        float drywet = 1.0f; // 100% wet: hear resynth only
+        resynth.SetSmoothing(0.4f);
+        resynth.SetSpectralFlatten(0.0f);
+        resynth.SetBrightDark(0.0f);
+        resynth.SetSparsity(0.35f);
+        resynth.SetPhaseDiffusion(0.4f);
+        resynth.SetFluff(fs.fluff_value);
+        resynth.SetPitchLockMode(true); // exercise pitch‑locked grains
+
+        float input_history[kFftSize];
+        size_t history_write_pos  = 0;
+        size_t total_samples_seen = 0;
+        float  grain_phase        = 0.0f;
+        std::vector<float> output(kNumFrames);
+
+        size_t   stepIndex           = 0;
+        unsigned samplesInCurStep    = 0;
+
+        auto startNextGrain = [&]() {
+            size_t idx = 0;
+            for(size_t g = 0; g < kNumGrains; ++g)
+            {
+                if(!grains[g].running)
+                {
+                    idx = g;
+                    break;
+                }
+            }
+            resynth.StartGrainFromHistory(input_history, history_write_pos, grains[idx]);
+        };
+
+        for(size_t i = 0; i < kNumFrames; ++i)
+        {
+            if(samplesInCurStep >= kSamplesPerStep)
+            {
+                samplesInCurStep = 0;
+                stepIndex        = (stepIndex < kNumSteps - 1) ? (stepIndex + 1) : stepIndex;
+            }
+            ++samplesInCurStep;
+
+            int   semitones   = kDiatonicOneOctave[stepIndex];
+            float voct_volts  = 2.0f + (float)semitones / 12.0f; // 2 V .. 3 V over one octave
+            float fundamental = 440.0f * powf(2.0f, voct_volts - 4.75f);
+            resynth.SetFundamentalHz(fundamental, kSampleRate);
+
+            float mono_in = mono[i];
+            input_history[history_write_pos] = mono_in;
+            history_write_pos                = (history_write_pos + 1) % kFftSize;
+            ++total_samples_seen;
+
+            if(total_samples_seen >= kFftSize)
+            {
+                const float time_scale = 1.0f;
+                grain_phase += time_scale;
+                while(grain_phase >= (float)kHopSize)
+                {
+                    startNextGrain();
+                    float hop       = (float)kHopSize;
+                    float jitterMul = SimpleResynth::RandUniform(0.7f, 1.3f);
+                    grain_phase -= hop * jitterMul;
+                }
+            }
+
+            float  wet          = 0.0f;
+            size_t active_count = 0;
+            for(size_t g = 0; g < kNumGrains; ++g)
+            {
+                if(grains[g].running)
+                {
+                    wet += grains[g].Process();
+                    ++active_count;
+                }
+            }
+            if(active_count > 0)
+                wet *= 1.0f / ((float)kHopDenom * (float)active_count);
+
+            float out_mono = (active_count > 0)
+                                 ? ((1.0f - drywet) * mono_in + drywet * wet)
+                                 : mono_in;
+
+            // Soft clip to reduce peaks
+            float lim = 0.95f;
+            if(out_mono > lim)
+                out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
+            if(out_mono < -lim)
+                out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
+
+            output[i] = out_mono;
+        }
+
+        char outPath[512];
+        snprintf(outPath,
+                 sizeof(outPath),
+                 "%s/%s_%s.wav",
+                 kOutFluffDir,
+                 out_basename,
+                 fs.name);
+
+        if(!SaveWav(outPath, output.data(), kNumFrames, kSampleRate, 1))
+        {
+            fprintf(stderr, "Failed to write %s\n", outPath);
+            return false;
+        }
+        printf("  %s\n", outPath);
+    }
+
+    return true;
+}
+
+int main(int argc, char** argv)
+{
+    const char* samples_dir = (argc >= 2) ? argv[1] : "samples";
+    std::vector<std::string> paths       = discover_wav_files(samples_dir);
+    if(paths.empty())
+    {
+        fprintf(stderr,
+                "No WAV files in %s. Add 48 kHz WAVs to run the FLUFF test.\n",
+                samples_dir);
+        return 1;
+    }
+
+    if(mkdir("out", 0755) != 0 && errno != EEXIST)
+    {
+        fprintf(stderr, "Failed to create out/\n");
+        return 1;
+    }
+    if(mkdir(kOutFluffDir, 0755) != 0 && errno != EEXIST)
+    {
+        fprintf(stderr, "Failed to create %s\n", kOutFluffDir);
+        return 1;
+    }
+
+    printf("FLUFF test: %zu sample(s) from %s -> %s/{basename}_fluff_combo{0..4}.wav\n",
+           paths.size(),
+           samples_dir,
+           kOutFluffDir);
+
+    int ok = 0;
+    for(const std::string& p : paths)
+    {
+        printf("[ %s ]\n", p.c_str());
+        if(process_one_file_with_fluff(p.c_str()))
+            ++ok;
+    }
+
+    printf("Done. Processed %d/%zu files. Outputs in %s/\n", ok, paths.size(), kOutFluffDir);
+    return (ok > 0) ? 0 : 1;
+}
+

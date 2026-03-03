@@ -1,7 +1,6 @@
-// Offline test: process church bells (or default sample) with each of the 8 CV
-// parameters swept in turn. For the first sweep (CV_1) dry/wet goes 0→100% wet;
-// for all other sweeps dry/wet is fixed at 100% wet. Outputs one WAV per
-// parameter with a descriptive name.
+// Offline test: process each sample in the samples folder with each of the 8 CV
+// parameters swept in turn. Writes to separate output directories per test type.
+// Output names: {input_basename}_{test_suffix}.wav
 // Build: make cv_sweeps (from test/) or make test_cv_sweeps (from Resynthesis/).
 
 #include "../ResynthEngine.h"
@@ -10,14 +9,18 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <direct.h>
 #define mkdir(path, mode) _mkdir(path)
+#include <io.h>
 #else
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <dirent.h>
 #endif
 
 static constexpr unsigned kSampleRate = 48000;
@@ -32,7 +35,18 @@ static constexpr size_t kVoctSweepNumFrames = (size_t)(kSampleRate * kVoctSweepD
 static constexpr float kSineLoopFreqHz = 220.0f;
 static constexpr size_t kSineLoopSamples = kSampleRate;  // 1 s loop
 
-static const char kOutDir[] = "out";
+// Separate output directory per test type
+static const char kOutCvSweep[]       = "out/cv_sweep";
+static const char kOutCvSweepMaxcomp[]= "out/cv_sweep_maxcomp";
+
+// MAX COMP compressor (matches firmware when B_8 is on)
+static const float kCompThreshMax = 0.2f;
+static const float kCompRatioMax  = -2.0f;
+static const float kCompMakeupMax = 2.6f;
+static const float kCompAttack    = 0.0003f;
+static const float kCompRelease   = 0.05f;
+static const float kSoftClipLim   = 0.95f;
+static const float kMinAvgLevelDbFs = -60.0f;
 
 // Very simple mono reverb to approximate having Plateau (B_7) engaged during tests.
 // Uses a feedback delay with a one-pole lowpass in the feedback path.
@@ -83,6 +97,70 @@ static const CvSweepTest kCvTests[] = {
 };
 static const size_t kNumCvTests = sizeof(kCvTests) / sizeof(kCvTests[0]);
 
+// Discover all .wav files in a directory. Returns paths like "samples/foo.wav".
+static std::vector<std::string> discover_wav_files(const char* dir)
+{
+    std::vector<std::string> out;
+#ifdef _WIN32
+    std::string pattern = std::string(dir) + "\\*.wav";
+    struct _finddata_t fd;
+    intptr_t h = _findfirst(pattern.c_str(), &fd);
+    if (h == -1) return out;
+    do {
+        if (!(fd.attrib & _A_SUBDIR) && strstr(fd.name, ".wav"))
+            out.push_back(std::string(dir) + "/" + fd.name);
+    } while (_findnext(h, &fd) == 0);
+    _findclose(h);
+#else
+    DIR* d = opendir(dir);
+    if (!d) return out;
+    struct dirent* e;
+    while ((e = readdir(d)) != nullptr) {
+        size_t len = strlen(e->d_name);
+        if (len > 4 && strcmp(e->d_name + len - 4, ".wav") == 0)
+            out.push_back(std::string(dir) + "/" + e->d_name);
+    }
+    closedir(d);
+#endif
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+static void apply_max_comp(float* buf, size_t num_frames)
+{
+    float env = 0.0f;
+    const float attack_coeff  = 1.0f - std::exp(-1.0f / (kCompAttack * (float)kSampleRate));
+    const float release_coeff = 1.0f - std::exp(-1.0f / (kCompRelease * (float)kSampleRate));
+    for (size_t i = 0; i < num_frames; ++i) {
+        float x = buf[i];
+        if (x > kSoftClipLim)  x = kSoftClipLim + (x - kSoftClipLim) / (1.0f + (x - kSoftClipLim));
+        if (x < -kSoftClipLim) x = -kSoftClipLim + (x + kSoftClipLim) / (1.0f - (x + kSoftClipLim));
+        float in_peak = std::fabs(x);
+        float coeff = (in_peak > env) ? attack_coeff : release_coeff;
+        env += coeff * (in_peak - env);
+        float gain = 1.0f;
+        if (env > 1e-6f) {
+            if (env <= kCompThreshMax)
+                gain = std::pow(kCompThreshMax / env, 0.5f);
+            else
+                gain = std::pow(kCompThreshMax / env, 1.0f - 1.0f / kCompRatioMax);
+            gain *= kCompMakeupMax;
+        }
+        x *= gain;
+        if (x > kSoftClipLim)  x = kSoftClipLim + (x - kSoftClipLim) / (1.0f + (x - kSoftClipLim));
+        if (x < -kSoftClipLim) x = -kSoftClipLim + (x + kSoftClipLim) / (1.0f - (x + kSoftClipLim));
+        buf[i] = x;
+    }
+}
+
+static float compute_rms_dbfs(const float* buf, size_t n)
+{
+    double sum_sq = 0.0;
+    for (size_t i = 0; i < n; ++i) { double x = (double)buf[i]; sum_sq += x * x; }
+    double rms = (n > 0 && sum_sq > 0.0) ? std::sqrt(sum_sq / (double)n) : 1e-10;
+    return 20.0f * (float)std::log10(rms > 1e-10 ? rms : 1e-10);
+}
+
 static bool load_input(const char* path, std::vector<float>& mono, unsigned sampleRate)
 {
     std::vector<float> inputSamples;
@@ -108,7 +186,8 @@ static bool run_one_cv_test(
     const float* mono,
     size_t num_frames,
     const char* out_basename,
-    const char* out_dir)
+    const char* out_dir,
+    bool max_comp_on)
 {
     using namespace resynth_engine;
     SimpleResynth resynth;
@@ -213,34 +292,48 @@ static bool run_one_cv_test(
         output[i] = out_with_plateau;
     }
 
+    if (max_comp_on)
+        apply_max_comp(output.data(), num_frames);
+
     char path[512];
     snprintf(path, sizeof(path), "%s/%s_%s.wav", out_dir, out_basename, kCvTests[cv_index].name);
     if (!SaveWav(path, output.data(), num_frames, kSampleRate, 1)) {
         fprintf(stderr, "Failed to write %s\n", path);
         return false;
     }
-    printf("  %s\n", path);
+    if (max_comp_on) {
+        float rms_dbfs = compute_rms_dbfs(output.data(), num_frames);
+        printf("  %s  %.1f dBFS\n", path, (double)rms_dbfs);
+        if (rms_dbfs < kMinAvgLevelDbFs) {
+            fprintf(stderr, "FAIL: %s avg level %.1f dBFS < %.1f dBFS\n",
+                    path, (double)rms_dbfs, (double)kMinAvgLevelDbFs);
+            return false;
+        }
+    } else {
+        printf("  %s\n", path);
+    }
     return true;
 }
 
 int main(int argc, char** argv)
 {
-    const char* inputPath = (argc >= 2) ? argv[1] : "samples/church_bells.wav";
-    std::vector<float> mono;
-    if (!load_input(inputPath, mono, kSampleRate)) {
-        fprintf(stderr, "No WAV at %s or wrong format (need 48 kHz). Use samples/church_bells.wav.\n", inputPath);
+    const char* samples_dir = (argc >= 2) ? argv[1] : "samples";
+    std::vector<std::string> sample_paths = discover_wav_files(samples_dir);
+    if (sample_paths.empty()) {
+        fprintf(stderr, "No WAV files in %s. Add 48 kHz WAVs to run tests.\n", samples_dir);
         return 1;
     }
 
-    const char* lastSlash = strrchr(inputPath, '/');
-    const char* base = lastSlash ? (lastSlash + 1) : inputPath;
-    const char* lastDot = strrchr(base, '.');
-    size_t baseLen = lastDot ? (size_t)(lastDot - base) : strlen(base);
-    char out_basename[256];
-    snprintf(out_basename, sizeof(out_basename), "%.*s", (int)baseLen, base);
-
-    if (mkdir(kOutDir, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "Failed to create output directory %s\n", kOutDir);
+    if (mkdir("out", 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create out/\n");
+        return 1;
+    }
+    if (mkdir(kOutCvSweep, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", kOutCvSweep);
+        return 1;
+    }
+    if (mkdir(kOutCvSweepMaxcomp, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", kOutCvSweepMaxcomp);
         return 1;
     }
 
@@ -249,23 +342,47 @@ int main(int argc, char** argv)
     for (size_t i = 0; i < kVoctSweepNumFrames; ++i)
         sine_30s[i] = 0.3f * sinf(kTwoPi * kSineLoopFreqHz * (float)(i % kSineLoopSamples) / (float)kSampleRate);
 
-    printf("CV parameter sweep tests (8 files):\n");
-    printf("  cv1–cv4, cv6–cv8: %.1f s each; cv5_voct: %.1f s (V/OCT 1 V -> 4 V, looped sine)\n",
-           kDurationSec, kVoctSweepDurationSec);
+    printf("CV sweep tests: %zu sample(s) from %s\n", sample_paths.size(), samples_dir);
+    printf("  Output dirs: %s (no MAX COMP), %s (MAX COMP, avg > %.1f dBFS)\n",
+           kOutCvSweep, kOutCvSweepMaxcomp, (double)kMinAvgLevelDbFs);
+    printf("  cv1–cv4, cv6–cv8: %.1f s each; cv5_voct: %.1f s\n\n", kDurationSec, kVoctSweepDurationSec);
 
-    for (size_t c = 0; c < kNumCvTests; ++c) {
-        if (c == 4) {
-            if (!run_one_cv_test(c, sine_30s.data(), kVoctSweepNumFrames, out_basename, kOutDir)) {
-                fprintf(stderr, "CV sweep test %zu (V/OCT) failed\n", c + 1);
-                return 1;
-            }
-        } else {
-            if (!run_one_cv_test(c, mono.data(), kNumFrames, out_basename, kOutDir)) {
-                fprintf(stderr, "CV sweep test %zu failed\n", c + 1);
-                return 1;
+    for (const std::string& inputPath : sample_paths) {
+        std::vector<float> mono;
+        if (!load_input(inputPath.c_str(), mono, kSampleRate)) {
+            fprintf(stderr, "Skip %s (wrong format or not 48 kHz).\n", inputPath.c_str());
+            continue;
+        }
+        const char* path = inputPath.c_str();
+        const char* lastSlash = strrchr(path, '/');
+        const char* base = lastSlash ? (lastSlash + 1) : path;
+        const char* lastDot = strrchr(base, '.');
+        size_t baseLen = lastDot ? (size_t)(lastDot - base) : strlen(base);
+        char out_basename[256];
+        snprintf(out_basename, sizeof(out_basename), "%.*s", (int)baseLen, base);
+
+        printf("[ %s ] -> %s_*.wav\n", inputPath.c_str(), out_basename);
+
+        for (int pass = 0; pass < 2; ++pass) {
+            bool max_comp_on = (pass == 1);
+            const char* out_dir = max_comp_on ? kOutCvSweepMaxcomp : kOutCvSweep;
+            if (max_comp_on) printf("  MAX COMP:\n");
+            else printf("  no MAX COMP:\n");
+            for (size_t c = 0; c < kNumCvTests; ++c) {
+                if (c == 4) {
+                    if (!run_one_cv_test(c, sine_30s.data(), kVoctSweepNumFrames, out_basename, out_dir, max_comp_on)) {
+                        fprintf(stderr, "CV sweep test %zu (V/OCT) failed\n", c + 1);
+                        return 1;
+                    }
+                } else {
+                    if (!run_one_cv_test(c, mono.data(), kNumFrames, out_basename, out_dir, max_comp_on)) {
+                        fprintf(stderr, "CV sweep test %zu failed\n", c + 1);
+                        return 1;
+                    }
+                }
             }
         }
     }
-    printf("Done. Outputs in %s/\n", kOutDir);
+    printf("\nDone. Outputs in %s/ and %s/\n", kOutCvSweep, kOutCvSweepMaxcomp);
     return 0;
 }

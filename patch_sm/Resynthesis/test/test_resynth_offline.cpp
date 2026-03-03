@@ -1,8 +1,5 @@
-// Offline test for the phase vocoder resynthesis engine.
-// Output length = duration of V/OCT CV movement: 14 quarter notes at 120 BPM (7 s).
-// V/OCT CV steps once per quarter note across two diatonic octaves (14 steps total).
-// Input is truncated or padded to that length so the test output reflects the full
-// pitch movement in one file. Output: Resynthesis/out/<basename>_resynth_processed.wav
+// Offline test: V/OCT (diatonic) sweep over 14 quarter notes. Runs for every WAV in
+// the samples folder. Output: out/voct_sweep/{basename}_voct_sweep.wav
 
 #include "../ResynthEngine.h"
 #include "wav_io.h"
@@ -10,14 +7,18 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <direct.h>
 #define mkdir(path, mode) _mkdir(path)
+#include <io.h>
 #else
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <dirent.h>
 #endif
 
 static constexpr unsigned kSampleRate = 48000;
@@ -27,8 +28,8 @@ static constexpr float kDurationSec = (kQuarterNotes * 60.0f) / kBpm;
 static constexpr size_t kNumFrames = (size_t)(kSampleRate * kDurationSec + 0.5f);
 static constexpr unsigned kSamplesPerStep = (unsigned)(kSampleRate * 60.0f / kBpm + 0.5f);
 
-static const char kOutDir[] = "out";
-static const char kOutSuffix[] = "_resynth_processed.wav";
+static const char kOutVoctSweepDir[] = "out/voct_sweep";
+static const char kOutSuffix[] = "_voct_sweep.wav";
 
 // Two diatonic octaves: 14 steps (one per quarter note), 0–24 semitones
 static const int kDiatonicTwoOctaves[] = {
@@ -37,32 +38,45 @@ static const int kDiatonicTwoOctaves[] = {
 };
 static const size_t kNumSteps = sizeof(kDiatonicTwoOctaves) / sizeof(kDiatonicTwoOctaves[0]);
 
-int main(int argc, char** argv)
+static std::vector<std::string> discover_wav_files(const char* dir)
 {
-    const char* inputPath = nullptr;
-    if (argc >= 2)
-        inputPath = argv[1];
-    else
-        inputPath = "samples/church_bells.wav";
+    std::vector<std::string> out;
+#ifdef _WIN32
+    std::string pattern = std::string(dir) + "\\*.wav";
+    struct _finddata_t fd;
+    intptr_t h = _findfirst(pattern.c_str(), &fd);
+    if (h == -1) return out;
+    do {
+        if (!(fd.attrib & _A_SUBDIR) && strstr(fd.name, ".wav"))
+            out.push_back(std::string(dir) + "/" + fd.name);
+    } while (_findnext(h, &fd) == 0);
+    _findclose(h);
+#else
+    DIR* d = opendir(dir);
+    if (!d) return out;
+    struct dirent* e;
+    while ((e = readdir(d)) != nullptr) {
+        size_t len = strlen(e->d_name);
+        if (len > 4 && strcmp(e->d_name + len - 4, ".wav") == 0)
+            out.push_back(std::string(dir) + "/" + e->d_name);
+    }
+    closedir(d);
+#endif
+    std::sort(out.begin(), out.end());
+    return out;
+}
 
+static bool process_one_voct_sweep(const char* inputPath)
+{
     std::vector<float> inputSamples;
     WavInfo info;
-    if (!LoadWav(inputPath, inputSamples, info))
-    {
-        fprintf(stderr, "No WAV at %s — using %.1f s test tone (48 kHz). Add a royalty-free sample (e.g. BBC church bells) for a better test.\n",
-                inputPath, kDurationSec);
-        inputSamples.resize(kNumFrames);
-        for (size_t i = 0; i < kNumFrames; ++i)
-            inputSamples[i] = 0.3f * sinf(2.0f * 3.14159f * 440.0f * (float)i / (float)kSampleRate);
-        info.sampleRate = kSampleRate;
-        info.numChannels = 1;
-        info.numFrames = kNumFrames;
-        inputPath = "samples/test_tone.wav";
+    if (!LoadWav(inputPath, inputSamples, info)) {
+        fprintf(stderr, "Skip %s (not a WAV or unreadable).\n", inputPath);
+        return false;
     }
-    else if (info.sampleRate != kSampleRate)
-    {
-        fprintf(stderr, "Expected %u Hz; got %u Hz. Resampling not implemented.\n", kSampleRate, info.sampleRate);
-        return 1;
+    if (info.sampleRate != kSampleRate) {
+        fprintf(stderr, "Skip %s (expected %u Hz, got %u).\n", inputPath, kSampleRate, info.sampleRate);
+        return false;
     }
 
     size_t numFramesIn = info.numFrames;
@@ -183,13 +197,13 @@ int main(int argc, char** argv)
     const char* base = lastSlash ? (lastSlash + 1) : inputPath;
     const char* lastDot = strrchr(base, '.');
     size_t baseLen = lastDot ? (size_t)(lastDot - base) : strlen(base);
-    size_t outPathLen = strlen(kOutDir) + 1 + baseLen + strlen(suffix) + 1;
+    size_t outPathLen = strlen(kOutVoctSweepDir) + 1 + baseLen + strlen(suffix) + 1;
     std::vector<char> outPath(outPathLen);
-    snprintf(outPath.data(), outPathLen, "%s/%.*s%s", kOutDir, (int)baseLen, base, suffix);
+    snprintf(outPath.data(), outPathLen, "%s/%.*s%s", kOutVoctSweepDir, (int)baseLen, base, suffix);
 
-    if (mkdir(kOutDir, 0755) != 0 && errno != EEXIST)
+    if (mkdir(kOutVoctSweepDir, 0755) != 0 && errno != EEXIST)
     {
-        fprintf(stderr, "Failed to create output directory %s\n", kOutDir);
+        fprintf(stderr, "Failed to create output directory %s\n", kOutVoctSweepDir);
         return 1;
     }
 
@@ -215,5 +229,32 @@ int main(int argc, char** argv)
     }
 
     printf("Wrote %s (%ld bytes)\n", outPath.data(), (long)size);
-    return 0;
+    return true;
+}
+
+int main(int argc, char** argv)
+{
+    const char* samples_dir = (argc >= 2) ? argv[1] : "samples";
+    std::vector<std::string> paths = discover_wav_files(samples_dir);
+    if (paths.empty()) {
+        fprintf(stderr, "No WAV files in %s. Add 48 kHz WAVs to run the V/OCT sweep test.\n", samples_dir);
+        return 1;
+    }
+    if (mkdir("out", 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create out/\n");
+        return 1;
+    }
+    if (mkdir(kOutVoctSweepDir, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", kOutVoctSweepDir);
+        return 1;
+    }
+    printf("V/OCT sweep test: %zu sample(s) from %s -> %s/{basename}_voct_sweep.wav\n",
+           paths.size(), samples_dir, kOutVoctSweepDir);
+    int ok = 0;
+    for (const std::string& p : paths) {
+        if (process_one_voct_sweep(p.c_str()))
+            ++ok;
+    }
+    printf("Done. Processed %d/%zu files. Outputs in %s/\n", ok, paths.size(), kOutVoctSweepDir);
+    return (ok > 0) ? 0 : 1;
 }

@@ -13,6 +13,7 @@
 #include "daisysp.h"
 #include "Plateau.h"
 #include "ResynthEngine.h"
+#include "Compression.h"
 
 #include <cmath>
 #include <cstdint>
@@ -51,8 +52,11 @@ static inline float CvToBipolar(float v)
 // ----------------------------------------------------------------------
 
 DaisyPatchSM patch;
-Switch     cv_swap_switch;   // B_8: "MAX COMP" — when pressed, swap CV banks and use MAX COMP compressor mode (negative ratio, near-full volume, preserve dynamics)
-Switch     plateau_switch;   // B_7: toggle Plateau reverb dry/wet
+// B_8: Mode select — when pressed, grains are pitch‑locked to V/OCT; when released,
+// the engine runs in partial‑based / spectral‑model mode.
+Switch     mode_switch;
+// B_7: reserved (reverb temporarily disabled)
+Switch     plateau_switch;
 
 static SimpleResynth resynth;
 static Grain         grains[kNumGrains];
@@ -68,18 +72,8 @@ static float  time_scale         = 1.0f;
 static float  cv_energy_smooth   = 0.0f;
 static const float cv_energy_coeff = 0.002f;  // smoothing (~0.1s at 48kHz block rate)
 
-// Compressor: makes output louder and more consistent as a sound source for filter/amplitude
-// When "MAX COMP" switch (B_8) is engaged: negative ratio (Omnipressor-style), near-full volume, preserves dynamics/transients
-static float  comp_env           = 0.0f;
-static const float comp_thresh   = 0.25f;   // ~-12 dB, compress above this (normal mode)
-static const float comp_ratio    = 2.0f;    // 2:1 normal
-static const float comp_makeup   = 1.8f;    // make-up gain (normal)
-// MAX COMP mode (when B_8 engaged): negative ratio, higher makeup, boost below threshold
-static const float comp_thresh_max = 0.2f;   // slightly lower threshold
-static const float comp_ratio_max  = -2.0f; // negative ratio (Eventide Omnipressor style): tame peaks, boost quiet -> near full volume, preserve transients
-static const float comp_makeup_max = 2.6f;   // higher make-up so output is near full scale
-static const float comp_attack   = 0.0003f; // 0.3 ms
-static const float comp_release  = 0.05f;   // 50 ms
+// Compressor: normal (2:1, make output consistent as a sound source)
+static patch_sm::Compressor comp_normal;
 
 #ifdef RES_DEBUG
 // Debug-logging cadence in audio samples (set from runtime sample rate)
@@ -92,7 +86,7 @@ static uint32_t g_debug_sample_accum     = 0;
 static void PrintStartupStatus()
 {
     patch.ProcessAnalogControls();
-    cv_swap_switch.Debounce();
+    mode_switch.Debounce();
     plateau_switch.Debounce();
 
     RES_DEBUG_PRINTLN("Resynthesis (Patch SM) debug build starting");
@@ -110,8 +104,8 @@ static void PrintStartupStatus()
                     FLT_VAR3(patch.GetAdcValue(CV_8)));
 
     RES_DEBUG_PRINTLN("Buttons / switches at startup:");
-    RES_DEBUG_PRINTLN("B7 Plateau: %s", plateau_switch.Pressed() ? "ON" : "OFF");
-    RES_DEBUG_PRINTLN("B8 MAX COMP: %s", cv_swap_switch.Pressed() ? "ON" : "OFF");
+    RES_DEBUG_PRINTLN("B7 Plateau (disabled): %s", plateau_switch.Pressed() ? "ON" : "OFF");
+    RES_DEBUG_PRINTLN("B8 Pitch lock: %s", mode_switch.Pressed() ? "ON" : "OFF");
 }
 #endif
 
@@ -136,12 +130,11 @@ void AudioCallback(AudioHandle::InputBuffer  in,
                    size_t                    size)
 {
     patch.ProcessAnalogControls();
-    cv_swap_switch.Debounce();
+    mode_switch.Debounce();
     plateau_switch.Debounce();
 
-    bool swap_cv = cv_swap_switch.Pressed();   // "MAX COMP" switch: CV swap + compressor mode
-    bool plateau_on = plateau_switch.Pressed();
-    bool max_comp_on = swap_cv;               // same switch: when engaged, compressor uses MAX COMP settings
+    bool pitch_lock_on = mode_switch.Pressed();   // B_8: pitch‑locked grains when ON
+    (void)plateau_switch; // reverb temporarily disabled
 
     // Read all 8 CVs; when B_8 ("MAX COMP") is 1, swap bank CV_1..4 with CV_5..8
     float v1 = patch.GetAdcValue(CV_1);
@@ -153,19 +146,20 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     float v7 = patch.GetAdcValue(CV_7);
     float v8 = patch.GetAdcValue(CV_8);
 
-    float drywet_knob   = swap_cv ? v5 : v1;
-    float smooth_knob   = swap_cv ? v6 : v2;
-    float flatten_knob  = swap_cv ? v7 : v3;
-    float tilt_knob     = swap_cv ? v8 : v4;
-    float voct_cv       = swap_cv ? v1 : v5;
-    float time_cv       = swap_cv ? v2 : v6;
-    float sparsity_cv   = swap_cv ? v3 : v7;
-    float diffusion_cv  = swap_cv ? v4 : v8;
+    float drywet_knob   = v1;
+    float smooth_knob   = v2;
+    float fluff_knob    = v3;
+    float tilt_knob     = v4;
+    float voct_cv       = v5;
+    float time_cv       = v6;
+    float sparsity_cv   = v7;
+    float diffusion_cv  = v8;
 
     // V/OCT: 0–10 V, 1 V/oct. 0 V = C0 (~16.35 Hz), 1 V = C1 (~32.7 Hz), 2 V = C2 (~65.4 Hz).
     float voct_volts = voct_cv * 10.0f;
     float fundamental_hz = 440.0f * powf(2.0f, voct_volts - 4.75f);
     resynth.SetFundamentalHz(fundamental_hz, patch.AudioSampleRate());
+    resynth.SetPitchLockMode(pitch_lock_on);
 
     // Normalize time/sparsity/diffusion (CV_6–CV_8) to bipolar -1..1 for -5 V .. +5 V
     float time_bi      = CvToBipolar(time_cv);
@@ -174,7 +168,7 @@ void AudioCallback(AudioHandle::InputBuffer  in,
 
     float drywet = fmap(drywet_knob, 0.0f, 1.0f);
     resynth.SetSmoothing(fmap(smooth_knob, 0.0f, 1.0f));
-    resynth.SetSpectralFlatten(fmap(flatten_knob, 0.0f, 1.0f));
+    resynth.SetFluff(fmap(fluff_knob, 0.0f, 1.0f));
     resynth.SetBrightDark(fmap(tilt_knob, -1.0f, 1.0f));
 
     // Time-stretch / grain density: <1 = slower, >1 = denser
@@ -282,54 +276,17 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         if (out_mono > lim)  out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
         if (out_mono < -lim) out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
 
-        // Compressor: normal or "MAX COMP" (B_8) — MAX COMP uses negative ratio (Omnipressor-style) for near-full volume while preserving dynamics
-        float in_peak = fabsf(out_mono);
-        float env_coeff = (in_peak > comp_env) ? (1.0f - expf(-1.0f / (comp_attack * 48000.0f)))
-                                               : (1.0f - expf(-1.0f / (comp_release * 48000.0f)));
-        comp_env += env_coeff * (in_peak - comp_env);
-        float gain = 1.0f;
-        if (comp_env > 1e-6f)
-        {
-            float thresh = max_comp_on ? comp_thresh_max : comp_thresh;
-            float ratio  = max_comp_on ? comp_ratio_max  : comp_ratio;
-            float makeup = max_comp_on ? comp_makeup_max : comp_makeup;
-            if (max_comp_on)
-            {
-                // MAX COMP: negative ratio (Omnipressor-style). Below threshold: boost quiet (expansion). Above: compress peaks. Result: near full volume, dynamics preserved.
-                if (comp_env <= thresh)
-                    gain = powf(thresh / comp_env, 0.5f);  // boost below threshold so average level comes up
-                else
-                    gain = powf(thresh / comp_env, 1.0f - 1.0f / ratio);  // ratio < 0 -> exponent > 1, tame peaks
-            }
-            else
-            {
-                if (comp_env > thresh)
-                    gain = powf(thresh / comp_env, 1.0f - 1.0f / ratio);
-            }
-            gain *= makeup;
-        }
-        out_mono *= gain;
-        // Final soft clip after compressor (MAX COMP can push level high)
+        // Compressor (fixed "normal" mode) after soft clip to give a stable level
+        out_mono = comp_normal.Process(out_mono);
+
+        // Final soft clip after compressor
         if (out_mono > lim)  out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
         if (out_mono < -lim) out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
 
         // Plateau reverb: when B_7 is on, 50/50 dry/wet; when off, completely dry.
-        float outL, outR;
-        if(plateau_on)
-        {
-            float wetL, wetR;
-            plateau.Process(out_mono, out_mono, wetL, wetR);
-            outL = 0.5f * (out_mono + wetL);
-            outR = 0.5f * (out_mono + wetR);
-        }
-        else
-        {
-            outL = out_mono;
-            outR = out_mono;
-        }
-
-        OUT_L[i] = outL;
-        OUT_R[i] = outR;
+        // Reverb temporarily disabled: direct mono → stereo
+        OUT_L[i] = out_mono;
+        OUT_R[i] = out_mono;
     }
 
     // CV_OUT_1: smoothed spectral energy (RMS per frame), 0–5 V
@@ -344,10 +301,14 @@ void AudioCallback(AudioHandle::InputBuffer  in,
 int main(void)
 {
     patch.Init();
-    cv_swap_switch.Init(patch.B8);
+    mode_switch.Init(patch.B8);
     plateau_switch.Init(patch.B7);
     resynth.Init();
     plateau.Init(patch.AudioSampleRate());
+
+    // Single "normal" compressor: 2:1, make output consistent as sound source
+    comp_normal.Init(patch.AudioSampleRate());
+    comp_normal.SetParams(0.25f, 2.0f, 1.8f, 0.0003f, 0.05f);
 #ifdef RES_DEBUG
     g_sample_rate            = patch.AudioSampleRate();
     g_debug_interval_samples = static_cast<uint32_t>(g_sample_rate);

@@ -1,62 +1,14 @@
 # Resynthesis / 化 Front Panel
 
-This directory contains a PCB-front-panel design for the **Resynthesis** example
-for **Daisy Patch SM / Patch.Init**. The artwork is intended to be decorative
-and readable while reflecting the **actual parameter and variable names** used
-in `Resynthesis.cpp` when the CV-swap toggle is *off*.
+All up‑to‑date information about **panel labels, control behaviour, jack mapping,
+and mechanical tests** now lives in the **main Resynthesis README** under the
+“Controls and panel mapping” and “Panel” sections:
 
-The primary title on the panel uses the single Chinese character **化** (huà),
-drawn from the *Daodejing*, in its sense of **transformation**.
+- `../README.md` → **Controls and panel mapping**  
+- `../README.md` → **Panel**
 
-## Files
-
-- `ResynthesisPanel.svg`  
-  Vector artwork of a 3U x 10HP Eurorack panel:
-  - Height: 128.5 mm  
-  - Width:  50.8 mm  
-  - All graphics and drill holes are in millimetres.
-
-- `ResynthesisPanel.jpg`  
-  Single panel preview image for quick visual reference. **Generated from
-  `ResynthesisPanel.svg`** by `make` (requires Inkscape). Run `make` to
-  regenerate whenever the SVG changes. The SVG is the source of truth and must
-  pass the panel tests first.
-
-## Mappings from firmware to panel
-
-These labels assume the **CV swap toggle (B_8)** is **OFF**, so controls are
-driven by `CV_1`–`CV_8` in their default bank. **Only the primary (white) labels
-are shown on the panel; there are no CV_1, CV_2, B_8, B_7, etc. sub-labels.**
-
-**Pots (CV_1–CV_4):**
-
-- **CV_1 – Dry/Wet**  
-  - Panel label: `DRY / WET`
-
-- **CV_2 – Magnitude Smoothing**  
-  - Panel label: `SMOOTH`
-
-- **CV_3 – Spectral Flatten**  
-  - Panel label: `FLATTEN`
-
-- **CV_4 – Color (bright/dark tilt)**  
-  - Panel label: `COLOR`
-
-**12 jacks (bottom of panel, 3 rows × 4 columns).** Labels are **over** each jack and centered. From top row to bottom row:
-
-- **Top row** (4 jacks): `B10`, `B9`, `B5`, `B6`
-- **Middle row** (4 jacks): `PITCH` (CV_5), `TIME` (CV_6), `DENSITY` (CV_7), *D* (CV_8; rendered as a single **italic** `D` in the same DIN-style font, echoing the diffusion symbol used in scientific notation)
-- **Bottom row** (4 jacks): `IN L`, `IN R`, `OUT L`, `OUT R` → audio inputs and outputs (`IN_L`, `IN_R`, `OUT_L`, `OUT_R`). The two middle jacks in this row are also `CV_OUT_1` and `CV_OUT_2` in firmware.
-
-**Switches (no sub-labels):**
-
-- **B_8 – CV swap + MAX COMP compressor**
-  - Panel label: `"MAX COMP"`. When engaged, swaps CV banks and sets compressor to MAX COMP mode (negative ratio, near-full volume, preserves dynamics).
-
-- **B_7 – Plateau reverb switch**  
-  - Panel label: `PLATEAU`
-
-All panel text is **all caps** and uses the open-source DIN-style font documented in the main Resynthesis README.
+This `panel/README.md` is kept only as a thin pointer so there is a single source
+of truth for documentation.
 
 ## Manufacturing notes
 
@@ -90,8 +42,10 @@ The current `ResynthesisPanel.svg` has been revised so that:
   `blank-Edge_Cuts.gbr`.
 - There are **exactly 22 drill holes**, matching the non‑plated NPTH tools in
   `patch_init_gerbers/blank-NPTH.drl`:
-  - 2 × 3.0 mm mounting slots (represented as 3.0 mm round holes at their
-    centres),
+  - 2 × 3.0 mm **mounting holes** (implemented on the panel as **four wide,
+    rectangular screw slots** whose equivalent 3.0 mm drill centres match the
+    Patch.Init NPTH file and sit 3 mm from the top and bottom edges, per the
+    Eurorack rail standard),
   - 1 × 3.2 mm (T2),
   - 2 × 5.5 mm (T3) for switches,
   - 13 × 6.2 mm (T4) for jacks,
@@ -132,6 +86,14 @@ passes the tests. **The first test run is the drill-identity check:**
   present in the panel SVG and matches position and size (within 0.1 mm).
   The panel can then be swapped with the stock Patch.Init front panel.
 
+- **`test_screw_holes_eurorack_rail_distance`**  
+  Verifies that the four corner screw cutouts (wide rectangular slots) have their
+  **vertical** centers at the same distance from the panel top/bottom as the
+  Eurorack standard: **3 mm** from the top edge and **3 mm** from the bottom edge
+  (see `eurorack_spec/README.md`). This ensures the panel aligns with standard
+  Eurorack rails (Doepfer A-100 / Gie-Tec). Drill positions for the two Patch.Init
+  mounting holes are taken from the screw cutout rect centers.
+
 - **`test_panel_passes_pcbway_style_validation`**  
   Runs local PCBWay-style mechanical checks so the panel would pass their
   online Gerber validation: minimum non-plated hole diameter ≥ 0.45 mm,
@@ -142,7 +104,7 @@ passes the tests. **The first test run is the drill-identity check:**
 - **`test_knob_labels_not_obscured_by_rogan_knobs`**  
   Models Mutable Instruments–style Rogan knobs (12 mm diameter) with a
   small clearance (0.5 mm) around the four pot holes (CV_1–CV_4). Ensures
-  the **primary** labels (DRY / WET, SMOOTH, FLATTEN, BRIGHT /) do not
+  the **primary** labels (DRY / WET, SMOOTH, FLUFF, BRIGHT /) do not
   intersect those knob footprints.
 
 - **`test_no_overlapping_text`**  
@@ -166,9 +128,25 @@ passes the tests. **The first test run is the drill-identity check:**
   horizontally centered (text x within 2 mm of hole center when
   `text-anchor` is middle).
 
+**Final step (after all tests):** The test script runs `render_eurorack_overlay.py`
+to generate an **Eurorack standard overlay** SVG. The overlay shows:
+- **Green dotted** vertical lines at 2HP, 4HP, 6HP, 8HP boundaries (1 HP = 5.08 mm).
+- **Neon blue dotted** horizontal lines at the vertical center of the rails when
+  the module is mounted (3 mm from top and bottom, per Doepfer A-100).
+- **Neon pink** annotations: (x, y) at the center of each cut/hole, plus panel
+  width × height. The overlay has the same viewBox as the panel so you can open
+  both in Inkscape and stack the overlay on top for alignment reference. The
+  script is reusable for other panel SVGs (see `render_eurorack_overlay.py --help`).
+
 ## External references and expected file formats
 
 External mechanical references and design rules:
+
+- **Eurorack / Doepfer A-100 mechanical standard** — `eurorack_spec/README.md` in this
+  folder summarizes mounting hole positions (3 mm from top/bottom edge), panel
+  height (128.5 mm), and links to Doepfer and Exploding Shed documentation. The
+  test `test_screw_holes_eurorack_rail_distance` checks screw cutout positions
+  against this standard.
 
 - **Patch.Init blank front‑panel Gerbers** (including `blank-NPTH.drl` and
   `blank-Edge_Cuts.gbr`) from Electrosmith’s Patch.Init documentation.
@@ -188,4 +166,7 @@ Expected file formats in this folder:
   for board outline and original panel.
 - `ResynthesisPanel.jpg` — panel preview generated from the SVG by `make`
   (regenerate whenever the SVG changes).
+- `ResynthesisPanel_eurorack_overlay.svg` — Eurorack overlay from
+  `render_eurorack_overlay.py` (same viewBox as panel; stack in Inkscape for
+  HP grid, rail centers, cut annotations).
 

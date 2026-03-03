@@ -97,18 +97,20 @@
   <text x="25.4" y="8" class="panel-text" font-size="4" text-anchor="middle" fill="#ffffff">&#21270;</text>
   <text x="25.4" y="13" class="panel-text" font-size="3.6" text-anchor="middle" fill="#f5e3a1">RESYNTHESIS</text>
 
-  <!-- Mounting holes -->
-  <circle cx="7.5" cy="3" r="1.5" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.1" cy="125.5" r="1.5" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <!-- Mounting screw slots: wide rectangular, aligned with Eurorack rails (3 mm from top/bottom) -->
+  <rect x="5.000" y="1.500" width="5.000" height="3.000" rx="1.0" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <rect x="40.600" y="1.500" width="5.000" height="3.000" rx="1.0" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <rect x="5.000" y="124.000" width="5.000" height="3.000" rx="1.0" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <rect x="40.600" y="124.000" width="5.000" height="3.000" rx="1.0" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
 
   <!-- SD card holder cutout (matches patch_init_gerbers/blank-Edge_Cuts.gbr) -->
   <rect x="24.14" y="33.493" width="3.208" height="12.802" fill="none" stroke="#ffffff" stroke-width="0.2" />
 
   <!-- Pots CV_1-CV_4 (7.2 mm) -->
-  <circle cx="11.176" cy="22.904" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="39.65" cy="22.904" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="11.176" cy="42.027" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="39.65" cy="42.027" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="11.176" cy="22.904" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="22.904" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="11.176" cy="42.027" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="42.027" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
 
   <!-- Labels beneath pots row 1 (y >= 26.5), font 3.6 mm (>= 10 pt); clear of 12mm knob -->
   <text x="11.176" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DRY / WET</text>
@@ -119,22 +121,22 @@
   <text x="39.65" y="52" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">COLOR</text>
 
   <!-- T2 LED; T3/T4 jacks and switches -->
-  <circle cx="25.4" cy="19.252" r="1.6" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="8.65" cy="59.288" r="2.75" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="25.503" cy="61.957" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="42.155" cy="59.288" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="25.4" cy="19.252" r="1.6" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="8.65" cy="59.288" r="2.75" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="25.503" cy="61.957" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="42.155" cy="59.288" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
 
   <!-- MAX COMP (8.65, 59.288): label beneath 62.04; when engaged, compressor uses negative-ratio (Omnipressor-style) for near-full volume while preserving dynamics -->
   <text x="8.65" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">"MAX COMP"</text>
