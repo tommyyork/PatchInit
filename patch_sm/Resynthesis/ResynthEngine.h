@@ -83,10 +83,10 @@ inline void FftInPlace(Complex *data, size_t n, bool inverse)
 
 static constexpr size_t kFftBits   = 8;
 static constexpr size_t kFftSize   = 1 << kFftBits;
-static constexpr size_t kHopDenom   = 4;
+static constexpr size_t kHopDenom  = 4;
 static constexpr size_t kHopSize   = kFftSize / kHopDenom;
-static constexpr size_t kNumBins    = kFftSize / 2;
-static constexpr size_t kNumGrains  = 4;
+static constexpr size_t kNumBins   = kFftSize / 2;
+static constexpr size_t kNumGrains = 16;
 static constexpr float  kTwoPi     = 2.0f * static_cast<float>(M_PI);
 
 struct Grain
@@ -307,9 +307,25 @@ struct SimpleResynth
 
         if (sparsity > 0.0f && max_mag > 0.0f)
         {
+            // Soft-knee sparsity: gradually attenuate bins around the threshold
+            // instead of hard-gating them to zero, to avoid frame-to-frame
+            // jumps in spectral energy.
             float thresh = max_mag * (0.9f * sparsity);
+            float knee   = 0.2f * thresh;  // small band around thresh
             for (size_t k = 0; k <= kNumBins; ++k)
-                if (mag_smooth[k] < thresh) mag_smooth[k] = 0.0f;
+            {
+                float m = mag_smooth[k];
+                if (m < thresh - knee)
+                {
+                    m = 0.0f;
+                }
+                else if (m < thresh + knee)
+                {
+                    // Partially attenuate bins in the knee region.
+                    m *= 0.5f;
+                }
+                mag_smooth[k] = m;
+            }
         }
 
         // Restore spectral energy after shaping so output level stays consistent
@@ -444,8 +460,10 @@ struct SimpleResynth
                 float odd_amount  = 0.5f * (bright_dark + 1.0f);   // 0 at CCW, 1 at CW
                 float even_amount = 1.0f - odd_amount;             // 1 at CCW, 0 at CW
 
-                // Gains taper so partials sit with the resynthesis (harmonically rich but blended)
-                const float gains[]      = { 0.55f, 0.4f, 0.3f, 0.22f, 0.18f, 0.14f };  // h=1..6
+                // Gains taper so partials sit with the resynthesis (harmonically rich but blended).
+                // Slightly stronger than before so that the harmonic scaffold can more
+                // confidently drive the output towards a full-scale Eurorack level.
+                const float gains[]      = { 0.75f, 0.55f, 0.4f, 0.30f, 0.24f, 0.20f };  // h=1..6
                 const int   num_harmonics = 6;
 
                 // Existing harmonic reinforcement: only in partial‑based mode.
@@ -464,19 +482,30 @@ struct SimpleResynth
 
                 // Now ensure minimum levels by adding sine components if needed.
 
-                // Fundamental: ensure output magnitude >= input magnitude at k0.
+                // Fundamental: ensure output magnitude >= input magnitude at k0, and
+                // nudge it towards a healthy target based on the frame's spectral
+                // energy so that quiet inputs still rise to a musically useful level.
                 float fund_in  = mag_input[k0];
                 float fund_out = sqrtf(spectrum[k0].re * spectrum[k0].re
                                       + spectrum[k0].im * spectrum[k0].im);
-                if (fund_in > 0.0f && fund_out < fund_in)
+                // Target fundamental: at least the input level, but also at least a
+                // fraction of the frame's RMS energy so very quiet inputs are lifted.
+                float target_fund = fund_in;
+                if (last_frame_spectral_energy > 0.0f)
                 {
-                    float needed = fund_in - fund_out;
+                    float min_from_energy = 0.8f * last_frame_spectral_energy;
+                    if (target_fund < min_from_energy)
+                        target_fund = min_from_energy;
+                }
+                if (target_fund > 0.0f && fund_out < target_fund)
+                {
+                    float needed = target_fund - fund_out;
                     float phase  = (fund_out > 0.0f)
                         ? atan2f(spectrum[k0].im, spectrum[k0].re)
                         : 0.0f;
                     spectrum[k0].re += needed * cosf(phase);
                     spectrum[k0].im += needed * sinf(phase);
-                    fund_out = fund_in;
+                    fund_out = target_fund;
                 }
 
                 float prev_mag = fund_out;
@@ -553,13 +582,6 @@ struct SimpleResynth
                     grain.buffer[n] *= gain;
             }
         }
-
-        // Global attenuation: scale each grain way down so its samples fall between
-        // 0.1% and 10% of their previous values. This keeps the algorithm identical
-        // while substantially reducing raw grain level before overlap-add / compression.
-        float global_scale = RandUniform(0.001f, 0.10f);
-        for (size_t n = 0; n < kFftSize; ++n)
-            grain.buffer[n] *= global_scale;
 
         grain.Start();
     }

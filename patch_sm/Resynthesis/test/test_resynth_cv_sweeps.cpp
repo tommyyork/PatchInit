@@ -193,10 +193,9 @@ static bool run_one_cv_test(
     SimpleResynth resynth;
     Grain grains[kNumGrains];
     resynth.Init();
-    // For these tests we force the engine into the same mode as when
-    // the PITCH LOCK (B_8) switch is ON on hardware: pitch‑locked
-    // grains that follow the V/OCT input.
-    resynth.SetPitchLockMode(true);
+    // For these tests we exercise the partial‑based / spectral‑model path used
+    // when the mode switch (B_8) is ON on hardware.
+    resynth.SetPitchLockMode(false);
     for (size_t g = 0; g < kNumGrains; ++g) {
         grains[g].running = false;
         grains[g].index = 0;
@@ -207,7 +206,6 @@ static bool run_one_cv_test(
     size_t total_samples_seen = 0;
     float grain_phase = 0.0f;
     std::vector<float> output(num_frames);
-    float feedback_state = 0.0f;
 
     // Simulate B_7 (Plateau) toggled on: run output through a simple reverb and
     // mix 50/50 dry/wet, similar to the hardware path.
@@ -272,7 +270,7 @@ static bool run_one_cv_test(
             while (grain_phase >= (float)kHopSize) {
                 startNextGrain();
                 float hop       = (float)kHopSize;
-                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.7f, 1.3f);
+                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.9f, 1.1f);
                 grain_phase -= hop * jitterMul;
             }
         }
@@ -288,16 +286,9 @@ static bool run_one_cv_test(
         if (active_count > 0)
             wet *= 1.0f / ((float)kHopDenom * (float)active_count);
 
-        // Feedback driven by "smoothing" (CV_2) just like on hardware:
-        // fully CCW = 0, fully CW ≈ full feedback, clamped below runaway.
-        float max_feedback = 0.85f;
-        float feedback = max_feedback * smoothing * smoothing;
-        float wet_fb = wet + feedback * feedback_state;
-        feedback_state = wet_fb;
-
         // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
         float out_mono = (active_count > 0)
-            ? ((1.0f - drywet) * mono_in + drywet * wet_fb)
+            ? ((1.0f - drywet) * mono_in + drywet * wet)
             : mono_in;
 
         float rev = reverb.process(out_mono);

@@ -52,8 +52,8 @@ static inline float CvToBipolar(float v)
 // ----------------------------------------------------------------------
 
 DaisyPatchSM patch;
-// B_8: Mode select — when pressed, grains are pitch‑locked to V/OCT; when released,
-// the engine runs in partial‑based / spectral‑model mode.
+// B_8: Mode select — when pressed, the engine runs in partial‑based / spectral‑model
+// mode; when released, grains are pitch‑locked to V/OCT.
 Switch     mode_switch;
 // B_7: MAX COMP — toggles a stronger Omnipressor-style compressor on the output.
 Switch     plateau_switch;
@@ -71,9 +71,8 @@ static float  time_scale         = 0.1f;
 // One-pole smoothed spectral energy for CV_OUT_1 (0–1)
 static float  cv_energy_smooth   = 0.1f;
 static const float cv_energy_coeff = 0.01f;  // smoothing (~0.1s at 48kHz block rate)
-// Simple time-domain feedback around the resynth output, driven by CV_2 (SMOOTH).
-// 0 = no feedback, 1 = full internal feedback (clamped below runaway).
-static float  feedback_state     = 0.0f;
+// Smoothed wet gain to reduce level pumping when the number of active grains changes.
+static float  wet_gain_state     = 1.0f;
 
 // Compressor: normal (2:1, make output consistent as a sound source)
 static patch_sm::Compressor comp_normal;
@@ -118,7 +117,7 @@ static void PrintStartupStatus()
 
     RES_DEBUG_PRINTLN("Buttons / switches at startup:");
     RES_DEBUG_PRINTLN("B7 MAX COMP: %s", plateau_switch.Pressed() ? "ON" : "OFF");
-    RES_DEBUG_PRINTLN("B8 Pitch lock: %s", mode_switch.Pressed() ? "ON" : "OFF");
+    RES_DEBUG_PRINTLN("B8 Partial-based mode: %s", mode_switch.Pressed() ? "ON" : "OFF");
 }
 #endif
 
@@ -146,7 +145,8 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     mode_switch.Debounce();
     plateau_switch.Debounce();
 
-    bool pitch_lock_on = mode_switch.Pressed();    // B_8: pitch‑locked grains when ON
+    bool partial_mode_on = mode_switch.Pressed();  // B_8: partial‑based / spectral model when ON
+    bool pitch_lock_on   = !partial_mode_on;       // OFF = classic pitch‑lock mode
     bool max_comp_on   = plateau_switch.Pressed(); // B_7: MAX COMP + reverb when ON
 
     // Read all 8 CVs (CV_1..CV_8).
@@ -172,6 +172,7 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     float voct_volts = voct_cv * 10.0f;
     float fundamental_hz = 440.0f * powf(2.0f, voct_volts - 4.75f);
     resynth.SetFundamentalHz(fundamental_hz, patch.AudioSampleRate());
+    // In hardware, B_8 OFF = pitch‑locked grains; B_8 ON = partial‑based model.
     resynth.SetPitchLockMode(pitch_lock_on);
 
     // Normalize time/sparsity/diffusion (CV_6–CV_8) to bipolar -1..1 for -5 V .. +5 V
@@ -180,27 +181,26 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     float diffusion_bi = CvToBipolar(diffusion_cv);
 
     float drywet = fmap(drywet_knob, 0.0f, 1.0f);
-    float smoothing = fmap(smooth_knob, 0.0f, 1.0f);
+    // Emphasise extremes for more dramatic range; keep mid region usable.
+    float smoothing = powf(fmap(smooth_knob, 0.0f, 1.0f), 0.5f);
     resynth.SetSmoothing(smoothing);
-    resynth.SetFluff(fmap(fluff_knob, 0.0f, 1.0f));
-    resynth.SetBrightDark(fmap(tilt_knob, -1.0f, 1.0f));
+    // FLUFF: keep 0..1 but use a slightly curved response so higher values
+    // ramp up more quickly from mid travel.
+    float fluff = fmap(fluff_knob, 0.0f, 1.0f);
+    resynth.SetFluff(powf(fluff, 1.2f));
+    // Bright/dark tilt: extend slightly beyond -1..1 for a more obvious tonal shift.
+    resynth.SetBrightDark(fmap(tilt_knob, -1.5f, 1.5f));
 
-    // Time-stretch / grain density: <1 = slower, >1 = denser
-    // Map -5 V .. +5 V (~-1..1) to ~0.25x .. 4x around 1.0x using an exponential curve.
-    time_scale = powf(2.0f, time_bi * 2.0f); // -1 -> 0.25, 0 -> 1.0, 1 -> 4.0
+    // Time-stretch / grain density: <1 = slower, >1 = denser. Use a wider, more
+    // dramatic range from ~0.125x to ~8x for ±5 V, still centred at 1.0x.
+    time_scale = powf(2.0f, time_bi * 3.0f); // -1 -> 0.125, 0 -> 1.0, 1 -> 8.0
 
-    // Sparsity and phase diffusion: restore a wide 0..1 range for strong, metallic effects.
-    // -5 V..+5 V (bipolar) is mapped back to 0..1 (0 V = 0.5), with internal energy
-    // preservation so the sound stays present even at extreme settings.
-    resynth.SetSparsity(0.5f * (sparsity_bi + 1.0f));       // -1..1 -> 0..1
-    resynth.SetPhaseDiffusion(0.5f * (diffusion_bi + 1.0f)); // -1..1 -> 0..1
-
-    // Map SMOOTH (CV_2) to feedback amount: fully CCW = 0, fully CW = full feedback.
-    // Clamp the effective loop gain below 1.0 so the feedback does not run away.
-    // A gentle curve keeps most of the knob travel in the musically useful range.
-    float feedback_amount = smoothing;              // 0..1
-    float max_feedback = 0.85f;                     // safety margin against runaway
-    float feedback = max_feedback * feedback_amount * feedback_amount; // emphasize lower range
+    // Sparsity and phase diffusion: map -5 V..+5 V (bipolar) back to 0..1 with a
+    // squaring curve so most of the travel produces pronounced changes.
+    float sparsity_norm  = 0.5f * (sparsity_bi + 1.0f);       // -1..1 -> 0..1
+    float diffusion_norm = 0.5f * (diffusion_bi + 1.0f);      // -1..1 -> 0..1
+    resynth.SetSparsity(sparsity_norm * sparsity_norm);       // emphasise high values
+    resynth.SetPhaseDiffusion(diffusion_norm * diffusion_norm);
 
 #ifdef RES_DEBUG
     // Periodic debug dump of control and spectral state
@@ -265,9 +265,10 @@ void AudioCallback(AudioHandle::InputBuffer  in,
             while(grain_phase >= static_cast<float>(kHopSize))
             {
                 StartNextGrain();
-                // Jittered hop: around kHopSize with ±30% variation.
+                // Jittered hop: around kHopSize with mild variation to avoid
+                // a rigid launch grid but without creating strong level swings.
                 float hop       = static_cast<float>(kHopSize);
-                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.7f, 1.3f);
+                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.9f, 1.1f);
                 grain_phase -= hop * jitterMul;
             }
         }
@@ -284,17 +285,21 @@ void AudioCallback(AudioHandle::InputBuffer  in,
                 ++active_count;
             }
         }
+        // Smooth the effective gain so changes in the number of overlapping
+        // grains do not immediately translate into audible pumping.
         if(active_count > 0)
-            wet *= 1.0f / (static_cast<float>(kHopDenom) * static_cast<float>(active_count));
-
-        // Simple feedback loop on the wet resynth signal, driven by CV_2 (SMOOTH).
-        // Feedback is applied only once per sample and clamped below runaway.
-        float wet_fb = wet + feedback * feedback_state;
-        feedback_state = wet_fb;
+        {
+            float target_gain = 1.0f
+                                / (static_cast<float>(kHopDenom)
+                                   * static_cast<float>(active_count));
+            const float alpha = 0.01f; // ~100-frame time constant
+            wet_gain_state += alpha * (target_gain - wet_gain_state);
+        }
+        wet *= wet_gain_state;
 
         // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
         float out_mono = (active_count > 0)
-            ? ((1.0f - drywet) * mono + drywet * wet_fb)
+            ? ((1.0f - drywet) * mono + drywet * wet)
             : mono;
 
         // Soft clip to reduce harsh peaks and further smooth level variation
@@ -387,8 +392,8 @@ int main(void)
         grains[g].running = false;
         grains[g].index   = 0;
     }
-    grain_phase        = 0.0f;
-    time_scale         = 1.0f;
+    grain_phase        = 0.1f;
+    time_scale         = 0.1f;
     total_samples_seen = 0;
     history_write_pos  = 0;
 

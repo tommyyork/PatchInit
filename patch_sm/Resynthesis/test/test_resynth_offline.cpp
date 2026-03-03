@@ -108,23 +108,36 @@ static bool process_one_voct_sweep(const char* inputPath)
     }
 
     float drywet = 1.0f;  // 100% wet so output is resynthesized only (no dry mix)
-    // Basic phase-vocoder style resynthesis of the input: neutral
-    // shaping, no sparsity/diffusion, and pure_resynth_mode enabled so
-    // there is no pitch-shift or harmonic overlay.
-    resynth.SetSmoothing(0.4f);
-    resynth.SetSpectralFlatten(0.0f);
-    resynth.SetBrightDark(0.0f);
-    resynth.SetSparsity(0.0f);
-    resynth.SetPhaseDiffusion(0.0f);
-    resynth.SetPureResynthMode(true);
+    // Approximate the firmware's partial‑based / spectral‑model path
+    // (mode switch B_8 ON) but with more aggressive defaults so that a
+    // single offline render clearly exposes the algorithm's character.
+    float smoothing        = 0.65f;  // stronger magnitude smoothing
+    float flatten          = 0.45f;  // noticeably whitening the spectrum
+    float tilt             = 0.35f;  // audibly bright by default
+    float sparsity         = 0.45f;  // moderate spectral carving
+    float phase_diffusion  = 0.35f;  // clear but animated phase
+    float fluff            = 0.55f;  // engage multiple FLUFF stages by default
+
+    resynth.SetSmoothing(smoothing);
+    resynth.SetSpectralFlatten(flatten);
+    resynth.SetBrightDark(tilt);
+    resynth.SetSparsity(sparsity);
+    resynth.SetPhaseDiffusion(phase_diffusion);
+    resynth.SetFluff(fluff);
+    // Match the firmware's partial‑based mode (pitch_lock_mode_ == false).
+    resynth.SetPureResynthMode(false);
+    resynth.SetPitchLockMode(false);
 
     const float time_scale = 1.0f;  // neutral (no time stretch) for offline test
 
     float input_history[kFftSize];
-    size_t history_write_pos = 0;
+    size_t history_write_pos  = 0;
     size_t total_samples_seen = 0;
-    float grain_phase = 0.0f;
+    float grain_phase         = 0.0f;
     std::vector<float> output(kNumFrames);
+    // Smoothed wet gain to reduce pumping when the number of overlapping
+    // grains changes, mirroring the realtime firmware behaviour.
+    float wet_gain_state      = 1.0f;
 
     size_t stepIndex = 0;
     unsigned samplesInCurrentStep = 0;
@@ -164,7 +177,9 @@ static bool process_one_voct_sweep(const char* inputPath)
             {
                 startNextGrain();
                 float hop       = (float)kHopSize;
-                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.7f, 1.3f);
+                // Mild jitter, as used in the firmware, to avoid both a rigid
+                // launch grid and large fluctuations in grain overlap.
+                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.9f, 1.1f);
                 grain_phase -= hop * jitterMul;
             }
         }
@@ -180,7 +195,14 @@ static bool process_one_voct_sweep(const char* inputPath)
             }
         }
         if (active_count > 0)
-            wet *= 1.0f / ((float)kHopDenom * (float)active_count);
+        {
+            float target_gain = 1.0f
+                                / ((float)kHopDenom
+                                   * (float)active_count);
+            const float alpha = 0.01f; // ~100-frame smoothing
+            wet_gain_state += alpha * (target_gain - wet_gain_state);
+        }
+        wet *= wet_gain_state;
 
         // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
         float out_mono = (active_count > 0)

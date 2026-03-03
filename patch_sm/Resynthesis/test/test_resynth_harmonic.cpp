@@ -48,7 +48,7 @@ static constexpr size_t kHeldNoteFrames
 static const char kOutHarmonicDir[] = "out/harmonic";
 
 // For the harmonic tests we now use a moderately dense grain cloud
-// compared to the real-time engine: 4 grains (realtime) -> 40 grains.
+// compared to the real-time engine: 16 grains (realtime) -> 40 grains.
 static constexpr size_t kHarmonicNumGrains = 40;
 
 // Two diatonic octaves: 14 steps (one per quarter note), 0–24 semitones.

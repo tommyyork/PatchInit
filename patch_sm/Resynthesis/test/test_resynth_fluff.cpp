@@ -46,6 +46,15 @@ static constexpr size_t kNumFrames
 
 static const char kOutFluffDir[] = "out/fluff";
 
+// Reuse the MAX COMP compressor shape from the CV sweep tests so FLUFF
+// results are rendered at a similar loudness to firmware with MAX COMP on.
+static constexpr float kCompThreshMax = 0.2f;
+static constexpr float kCompRatioMax  = -2.0f;
+static constexpr float kCompMakeupMax = 2.6f;
+static constexpr float kSoftClipLim   = 0.95f;
+static constexpr float kCompAttack    = 0.0003f;
+static constexpr float kCompRelease   = 0.05f;
+
 struct FluffSetting
 {
     const char* name;
@@ -61,6 +70,47 @@ static const FluffSetting kFluffSettings[] = {
     {"combo4", 1.00f}, // 4 stages
 };
 static const size_t kNumFluffSettings = sizeof(kFluffSettings) / sizeof(kFluffSettings[0]);
+
+static void apply_max_comp(float* buf, size_t num_frames)
+{
+    float env = 0.0f;
+    const float attack_coeff
+        = 1.0f - std::exp(-1.0f / (kCompAttack * (float)kSampleRate));
+    const float release_coeff
+        = 1.0f - std::exp(-1.0f / (kCompRelease * (float)kSampleRate));
+    for(size_t i = 0; i < num_frames; ++i)
+    {
+        float x = buf[i];
+        if(x > kSoftClipLim)
+            x = kSoftClipLim
+                + (x - kSoftClipLim) / (1.0f + (x - kSoftClipLim));
+        if(x < -kSoftClipLim)
+            x = -kSoftClipLim
+                + (x + kSoftClipLim) / (1.0f - (x + kSoftClipLim));
+        float in_peak = std::fabs(x);
+        float coeff   = (in_peak > env) ? attack_coeff : release_coeff;
+        env += coeff * (in_peak - env);
+        float gain = 1.0f;
+        if(env > 1e-6f)
+        {
+            if(env <= kCompThreshMax)
+                gain = std::pow(kCompThreshMax / env, 0.5f);
+            else
+                gain = std::pow(
+                           kCompThreshMax / env,
+                           1.0f - 1.0f / kCompRatioMax);
+            gain *= kCompMakeupMax;
+        }
+        x *= gain;
+        if(x > kSoftClipLim)
+            x = kSoftClipLim
+                + (x - kSoftClipLim) / (1.0f + (x - kSoftClipLim));
+        if(x < -kSoftClipLim)
+            x = -kSoftClipLim
+                + (x + kSoftClipLim) / (1.0f - (x + kSoftClipLim));
+        buf[i] = x;
+    }
+}
 
 static std::vector<std::string> discover_wav_files(const char* dir)
 {
@@ -151,13 +201,16 @@ static bool process_one_file_with_fluff(const char* inputPath)
         }
 
         float drywet = 1.0f; // 100% wet: hear resynth only
-        resynth.SetSmoothing(0.4f);
-        resynth.SetSpectralFlatten(0.0f);
-        resynth.SetBrightDark(0.0f);
-        resynth.SetSparsity(0.35f);
-        resynth.SetPhaseDiffusion(0.4f);
+        // Use assertive defaults for smoothing/flatten/tilt, but keep sparsity and
+        // diffusion near minimum so FLUFF is the main driver of texture.
+        resynth.SetSmoothing(0.8f);        // heavy magnitude smoothing
+        resynth.SetSpectralFlatten(0.65f); // strongly whiten / flatten spectrum
+        resynth.SetBrightDark(0.45f);      // noticeably bright tilt
+        resynth.SetSparsity(0.05f);        // minimal spectral carving by default
+        resynth.SetPhaseDiffusion(0.05f);  // very low phase diffusion; FLUFF adds more
         resynth.SetFluff(fs.fluff_value);
-        resynth.SetPitchLockMode(true); // exercise pitch‑locked grains
+        // Exercise the partial‑based / spectral‑model mode used when B_8 is ON.
+        resynth.SetPitchLockMode(false);
 
         float input_history[kFftSize];
         size_t history_write_pos  = 0;
@@ -208,7 +261,9 @@ static bool process_one_file_with_fluff(const char* inputPath)
                 {
                     startNextGrain();
                     float hop       = (float)kHopSize;
-                    float jitterMul = SimpleResynth::RandUniform(0.7f, 1.3f);
+                    // Mild jitter as in the firmware path so grains form a dense,
+                    // but not wildly varying, cloud.
+                    float jitterMul = SimpleResynth::RandUniform(0.9f, 1.1f);
                     grain_phase -= hop * jitterMul;
                 }
             }
@@ -247,6 +302,10 @@ static bool process_one_file_with_fluff(const char* inputPath)
                  kOutFluffDir,
                  out_basename,
                  fs.name);
+
+        // Apply offline MAX COMP so FLUFF renders match the firmware path
+        // with the MAX COMP switch engaged.
+        apply_max_comp(output.data(), kNumFrames);
 
         if(!SaveWav(outPath, output.data(), kNumFrames, kSampleRate, 1))
         {
