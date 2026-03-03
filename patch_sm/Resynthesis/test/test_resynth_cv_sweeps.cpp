@@ -39,7 +39,7 @@ static constexpr size_t kSineLoopSamples = kSampleRate;  // 1 s loop
 static const char kOutCvSweep[]       = "out/cv_sweep";
 static const char kOutCvSweepMaxcomp[]= "out/cv_sweep_maxcomp";
 
-// MAX COMP compressor (matches firmware when B_8 is on)
+// MAX COMP compressor (matches firmware when B_7 is on)
 static const float kCompThreshMax = 0.2f;
 static const float kCompRatioMax  = -2.0f;
 static const float kCompMakeupMax = 2.6f;
@@ -87,9 +87,9 @@ struct CvSweepTest {
 
 static const CvSweepTest kCvTests[] = {
     { "cv1_drywet",         "Dry/wet crossfade 0% -> 100% wet" },
-    { "cv2_smoothing",      "Magnitude smoothing 0.25 -> 1 (avoids freeze-first-frame silence)" },
-    { "cv3_flatten",        "Spectral flatten 0 -> 1" },
-    { "cv4_tilt",           "Bright/dark tilt -1 -> 1 (tilt gain clamped)" },
+    { "cv2_smoothing",      "Magnitude smoothing 0.10 -> 0.95 (clear transients -> glassy pads)" },
+    { "cv3_flatten",        "Spectral flatten 0.10 -> 1 (original spectrum -> whitened / formant-rich)" },
+    { "cv4_tilt",           "Bright/dark tilt -1 -> 1 (even vs odd harmonic emphasis in partial-based mode)" },
     { "cv5_voct",           "V/OCT sweep 1 V -> 4 V over 30 s (looped sine)" },
     { "cv6_timestretch",    "Time stretch 0.5x -> 4x (avoids too-few-grains near-silence)" },
     { "cv7_sparsity",       "Spectral sparsity 0 -> 0.9 (ring-mod / formant-like at high end)" },
@@ -193,6 +193,10 @@ static bool run_one_cv_test(
     SimpleResynth resynth;
     Grain grains[kNumGrains];
     resynth.Init();
+    // For these tests we force the engine into the same mode as when
+    // the PITCH LOCK (B_8) switch is ON on hardware: pitch‑locked
+    // grains that follow the V/OCT input.
+    resynth.SetPitchLockMode(true);
     for (size_t g = 0; g < kNumGrains; ++g) {
         grains[g].running = false;
         grains[g].index = 0;
@@ -203,6 +207,7 @@ static bool run_one_cv_test(
     size_t total_samples_seen = 0;
     float grain_phase = 0.0f;
     std::vector<float> output(num_frames);
+    float feedback_state = 0.0f;
 
     // Simulate B_7 (Plateau) toggled on: run output through a simple reverb and
     // mix 50/50 dry/wet, similar to the hardware path.
@@ -220,21 +225,21 @@ static bool run_one_cv_test(
     for (size_t i = 0; i < num_frames; ++i) {
         float t = (float)i / (float)num_frames;  // 0 .. 1 over this test's duration
 
-        // Neutral values; override the one under test. Default V/OCT = 2 V (C2).
+        // Neutral "glassy" defaults; override the one under test. Default V/OCT = 2 V (C2).
         // Dry/wet 100% wet for sweeps 2–8 so the parameter under test is heard clearly.
         float drywet = 1.0f;
-        float smoothing = 0.5f;
-        float flatten = 0.5f;
-        float tilt = 0.0f;
+        float smoothing = 0.35f;       // slightly fast smoothing for clear attacks
+        float flatten = 0.15f;         // mostly original spectral shape
+        float tilt = 0.1f;             // gently bright by default
         float fundamental_hz = 440.0f * powf(2.0f, 2.0f - 4.75f);  // 2 V = C2 (~65.4 Hz)
         float time_scale = 1.0f;
-        float sparsity = 0.5f;
-        float phase_diffusion = 0.5f;
+        float sparsity = 0.15f;        // dense spectrum for glassy tones
+        float phase_diffusion = 0.1f;  // mostly coherent phase for clarity
 
         switch (cv_index) {
             case 0: drywet = t; break;  // CV1 sweep: 0% -> 100% wet
-            case 1: smoothing = 0.25f + t * 0.75f; break;  // 0.25 -> 1 (avoid 0: would freeze first frame → silence)
-            case 2: flatten = t; break;
+            case 1: smoothing = 0.10f + t * 0.85f; break;  // 0.10 -> 0.95 (clear transients -> glassy pads)
+            case 2: flatten = 0.10f + t * 0.90f; break;    // 0.10 -> 1 (avoid totally unflattened corner case)
             case 3: tilt = 2.0f * t - 1.0f; break;  // -1..1 (tilt gain clamped in engine)
             case 4: {
                 // V/OCT linear sweep 1 V -> 4 V over full duration (e.g. 30 s for cv5)
@@ -243,8 +248,10 @@ static bool run_one_cv_test(
                 break;
             }
             case 5: time_scale = 0.5f + t * (4.0f - 0.5f); break;  // 0.5 -> 4 (avoid 0.25x: too few grains → near-silence)
-            case 6: sparsity = t * 0.9f; break;   // 0 -> 0.9 (avoid 1: can sound like dropouts on sparse material)
-            case 7: phase_diffusion = t; break;   // 0..1 sweep
+            case 6: sparsity = t; break;          // 0 -> 1 (full spectrum -> very sparse, formant-like clusters)
+            case 7:
+                phase_diffusion = t;             // 0..1 sweep (coherent -> noisy / diffused)
+                break;
             default: break;
         }
 
@@ -281,9 +288,16 @@ static bool run_one_cv_test(
         if (active_count > 0)
             wet *= 1.0f / ((float)kHopDenom * (float)active_count);
 
+        // Feedback driven by "smoothing" (CV_2) just like on hardware:
+        // fully CCW = 0, fully CW ≈ full feedback, clamped below runaway.
+        float max_feedback = 0.85f;
+        float feedback = max_feedback * smoothing * smoothing;
+        float wet_fb = wet + feedback * feedback_state;
+        feedback_state = wet_fb;
+
         // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
         float out_mono = (active_count > 0)
-            ? ((1.0f - drywet) * mono_in + drywet * wet)
+            ? ((1.0f - drywet) * mono_in + drywet * wet_fb)
             : mono_in;
 
         float rev = reverb.process(out_mono);

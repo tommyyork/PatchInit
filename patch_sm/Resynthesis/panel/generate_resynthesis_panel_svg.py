@@ -28,11 +28,197 @@ from string import Template
 
 
 HERE = Path(__file__).parent
-DEFAULT_OUTPUT = HERE / "ResynthesisPanel.svg"
+OUTPUT_DIR = HERE / "output"
+DEFAULT_OUTPUT = OUTPUT_DIR / "ResynthesisPanel.svg"
 
 # 3U × 10HP panel geometry (mm), matching eurorack_spec/README.md.
 PANEL_WIDTH_MM = 50.8
 PANEL_HEIGHT_MM = 128.5
+
+# Patch.Init panel origin in Gerber/Excellon coordinates (mm), shared with
+# test_panel_alignment.py so that NPTH drills, Edge_Cuts and KiCad PCB all map
+# into the same panel-local coordinate system.
+PATCH_INIT_PANEL_ORIGIN_X_MM = 26.545
+PATCH_INIT_PANEL_ORIGIN_Y_MM = -27.095  # Gerber/Excellon Y is negative downward
+OY_TOP_MM = 27.095  # -Gerber Y for the top edge
+
+
+def _panel_assets_drill_path() -> Path:
+    """Return the path to the Patch.Init NPTH drill file in the panel assets."""
+    return HERE / "assets" / "patch_init_gerbers" / "blank-NPTH.drl"
+
+
+def _panel_assets_edge_cuts_path() -> Path:
+    """Return the path to the Patch.Init Edge_Cuts file in the panel assets."""
+    return HERE / "assets" / "patch_init_gerbers" / "blank-Edge_Cuts.gbr"
+
+
+def _summarize_npth_families_from_drill() -> dict[str, float]:
+    """Infer per-family drill diameters (mm) directly from blank-NPTH.drl.
+
+    The NPTH drill file is the manufacturing source of truth. We derive:
+
+    - 2 × mounting holes
+    - 1 × LED
+    - 1 × B_7 toggle switch (TL1105… / 5.5 mm tool)
+    - 13 × S_JACK audio/CV jacks
+    - 4 × 9MM_SNAP-IN_POT potentiometers
+
+    purely from tool diameters and usage counts, without assuming any fixed
+    numeric values in this script. If parsing fails, we fall back to the
+    previously hard-coded dimensions so the script still produces a panel.
+    """
+    path = _panel_assets_drill_path()
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        # Legacy fallback: keep the previous approximate values.
+        return {
+            "mount": 3.0,
+            "led": 3.2,
+            "switch": 5.5,
+            "jack": 6.2,
+            "pot": 7.2,
+        }
+
+    tool_diam_mm: dict[str, float] = {}
+    current_tool: str | None = None
+    holes_by_diam: dict[float, int] = {}
+
+    # First pass: tool definitions (e.g. T1C3.000).
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            continue
+        m_tool = re.match(r"^T(\d+)C([0-9.]+)", line)
+        if m_tool:
+            tool_id = f"T{m_tool.group(1)}"
+            tool_diam_mm[tool_id] = float(m_tool.group(2))
+
+    # Second pass: count how many times each tool is used at a coordinate.
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(";"):
+            continue
+
+        m_select = re.match(r"^T(\d+)\s*$", line)
+        if m_select:
+            current_tool = f"T{m_select.group(1)}"
+            continue
+
+        if "X" not in line or "Y" not in line:
+            continue
+
+        coords = re.findall(r"X([-\d.]+)Y([-\d.]+)", line)
+        if not coords or current_tool is None:
+            continue
+        diam = tool_diam_mm.get(current_tool)
+        if diam is None:
+            continue
+        holes_by_diam[diam] = holes_by_diam.get(diam, 0) + len(coords)
+
+    if not holes_by_diam:
+        # Legacy fallback: keep the previous approximate values.
+        return {
+            "mount": 3.0,
+            "led": 3.2,
+            "switch_b7": 5.5,
+            "jack": 6.2,
+            "pot": 7.2,
+        }
+
+    # Identify families by relative size and approximate usage:
+    #
+    # - 2 × ~3.0 mm mounting
+    # - 1 × ~3.2 mm LED
+    # - 1 × ~5.5 mm B_7 TL1105… toggle switch
+    # - 13 × ~6.2 mm S_JACK audio/CV jacks (plus one B_8 toggle sharing the same tool)
+    # - 4 × ~7.2 mm 9MM_SNAP-IN_POT potentiometers
+    #
+    # To be robust to future changes we avoid hard-coding exact usage counts
+    # where possible and instead pick the diameter closest to an expected
+    # nominal value, ensuring each family is assigned at most one diameter.
+
+    # Helper: choose, from the remaining diameters, the one closest to an
+    # expected nominal value. Optionally constrain by a predicate on (diam, count).
+    remaining = dict(holes_by_diam)
+
+    def _pop_closest(target: float, *, predicate=None, default: float) -> float:
+        best_d = None
+        best_err = float("inf")
+        for d, c in remaining.items():
+            if predicate is not None and not predicate(d, c):
+                continue
+            err = abs(d - target)
+            if err < best_err:
+                best_err = err
+                best_d = d
+        if best_d is None:
+            return default
+        remaining.pop(best_d, None)
+        return best_d
+
+    mount_diam = _pop_closest(
+        3.0,
+        predicate=lambda d, c: c >= 2 and d <= 4.0,
+        default=3.0,
+    )
+    led_diam = _pop_closest(
+        3.2,
+        predicate=lambda d, c: c >= 1 and d < 4.0 and d != mount_diam,
+        default=3.2,
+    )
+    # B_7 switch uses its own 5.5 mm drill tool.
+    switch_b7_diam = _pop_closest(
+        5.5,
+        predicate=lambda d, c: c >= 1 and 4.5 <= d <= 6.0,
+        default=5.5,
+    )
+    jack_diam = _pop_closest(
+        6.2,
+        predicate=lambda d, c: c >= 10 and 5.5 <= d <= 7.0,
+        default=6.2,
+    )
+    pot_diam = _pop_closest(
+        7.2,
+        predicate=lambda d, c: c >= 2 and d >= 6.5,
+        default=7.2,
+    )
+
+    return {
+        "mount": mount_diam,
+        "led": led_diam,
+        "switch_b7": switch_b7_diam,
+        "jack": jack_diam,
+        "pot": pot_diam,
+    }
+
+
+_NPTH_FAMILY_DIAMETERS_MM = _summarize_npth_families_from_drill()
+
+# Per-family NPTH drill diameters (mm), derived from blank-NPTH.drl.
+MOUNT_DRILL_DIAMETER_MM = _NPTH_FAMILY_DIAMETERS_MM["mount"]
+LED_DRILL_DIAMETER_MM = _NPTH_FAMILY_DIAMETERS_MM["led"]
+SWITCH_B7_DRILL_DIAMETER_MM = _NPTH_FAMILY_DIAMETERS_MM["switch_b7"]
+JACK_DRILL_DIAMETER_MM = _NPTH_FAMILY_DIAMETERS_MM["jack"]
+POT_DRILL_DIAMETER_MM = _NPTH_FAMILY_DIAMETERS_MM["pot"]
+
+# B_8 toggle uses the jack-family 6.2 mm drill tool.
+SWITCH_B8_DRILL_DIAMETER_MM = JACK_DRILL_DIAMETER_MM
+
+# Component-family **panel hole** diameters (mm).
+#
+# These are the final cut-out sizes used in the SVG. They are derived from the
+# NPTH drill diameters above, with a small clearance margin so that hardware
+# drops cleanly into the panel while keeping the drill files as the mechanical
+# source of truth.
+#
+# Potentiometers currently use a slightly larger clearance than jacks to match
+# the existing checked-in artwork.
+POT_PANEL_DIAMETER_MM = POT_DRILL_DIAMETER_MM + 0.3
+SWITCH_B7_PANEL_DIAMETER_MM = SWITCH_B7_DRILL_DIAMETER_MM + 0.0
+SWITCH_B8_PANEL_DIAMETER_MM = SWITCH_B8_DRILL_DIAMETER_MM + 0.0
+JACK_PANEL_DIAMETER_MM = JACK_DRILL_DIAMETER_MM + 0.1
 
 
 def _format_screw_slots() -> str:
@@ -197,11 +383,11 @@ $SCREW_SLOTS
   <!-- SD card holder cutout (matches patch_init_gerbers/blank-Edge_Cuts.gbr) -->
   <rect x="24.14" y="33.493" width="3.208" height="12.802" fill="none" stroke="#ffffff" stroke-width="0.2" />
 
-  <!-- Pots CV_1-CV_4 (7.2 mm) -->
-  <circle cx="11.176" cy="22.904" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="39.65" cy="22.904" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="11.176" cy="42.027" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="39.65" cy="42.027" r="3.6" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <!-- Pots CV_1-CV_4 (9MM_SNAP-IN_POT… → ${POT_DIAMETER_MM} mm panel holes) -->
+  <circle cx="11.176" cy="22.904" r="${POT_R}" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="22.904" r="${POT_R}" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="11.176" cy="42.027" r="${POT_R}" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="42.027" r="${POT_R}" fill="none" stroke="#ffffff" stroke-width="0.3" />
 
   <!-- Labels beneath pots row 1 (y >= 26.5), font 3.6 mm (>= 10 pt); clear of 12mm knob -->
   <text x="11.176" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DRY / WET</text>
@@ -213,30 +399,38 @@ $SCREW_SLOTS
 
   <!-- T2 LED; T3/T4 jacks and switches -->
   <circle cx="25.4" cy="19.252" r="1.6" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="8.65" cy="59.288" r="2.75" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="25.503" cy="61.957" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="42.155" cy="59.288" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="84.562" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="98.312" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="111.9" r="3.1" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <!-- B_7 (MAX COMP) uses TL1105… footprint → ${SWITCH_B7_DIAMETER_MM} mm panel hole.
+       B_8 (PITCH LOCK) uses a toggle on the jack-family 6.2 mm drill → ${SWITCH_B8_DIAMETER_MM} mm panel hole. -->
+  <circle cx="8.65" cy="59.288" r="${SWITCH_R_B7}" fill="none" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="25.503" cy="61.957" r="${SWITCH_R_B8}" fill="none" stroke="#ffffff" stroke-width="0.3" />
 
-  <!-- Left switch (B_7, reserved) at (8.65, 59.288): panel label RESERVED for future use -->
-  <text x="8.65" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">RESERVED</text>
+  <!-- All jacks use S_JACK footprints → ${JACK_DIAMETER_MM} mm panel holes -->
+  <circle cx="7.15" cy="84.562" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="98.312" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="111.9" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="84.562" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="98.312" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="111.9" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="84.562" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="98.312" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="111.9" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="42.155" cy="59.288" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="84.562" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="98.312" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="111.9" r="${JACK_R}" fill="none" stroke="#ffffff" stroke-width="0.2" />
 
-  <!-- Centre switch (B_8, mode) at (25.503, 61.957): panel label PITCH LOCK -->
-  <text x="25.503" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">PITCH LOCK</text>
+  <!-- Left switch (B_7, MAX COMP) at (8.65, 59.288): panel label split over two lines -->
+  <text x="8.65" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">MAX</text>
+  <text x="8.65" y="69.53" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">COMP</text>
 
-  <!-- CV_OUT_1 / C10 jack at (42.155, 59.288): panel label THOUGHTS -->
-  <text x="42.155" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">THOUGHTS</text>
+  <!-- Centre switch (B_8, mode) at (25.503, 61.957): panel label PITCH LOCK, split over two lines.
+       The top line is moved down so that the minimum vertical clearance from the drill center
+       matches the padding used for THOUGHTS and MAX COMP. -->
+  <text x="25.503" y="68.7" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">PITCH</text>
+  <text x="25.503" y="72.23" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">LOCK</text>
+
+  <!-- CV_OUT_1 / C10 jack at (42.155, 59.288): panel label THOUGHTS (rendered as !!! on panel) -->
+  <text x="42.155" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">!!!</text>
 
   <!-- 12 jacks: labels OVER each jack, centered. Top row (y=84.562) ? B10, B9, B5, B6 -->
   <text x="7.15" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B10</text>
@@ -261,18 +455,186 @@ $SCREW_SLOTS
 )
 
 
+def _load_drill_holes_from_npht() -> list[tuple[float, float, float]]:
+    """Load NPTH drill holes from blank-NPTH.drl as panel-local (x, y, r) tuples.
+
+    This uses the same panel-local coordinate system as the alignment tests:
+    origin at the top-left of the panel, X to the right, Y down.
+    """
+    path = _panel_assets_drill_path()
+    if not path.exists():
+        return []
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+
+    import re as re_mod
+
+    tool_diam_mm: dict[str, float] = {}
+    current_tool: str | None = None
+    holes: list[tuple[float, float, float]] = []
+
+    # Tool definitions: T1C3.000, T2C3.200, ...
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            continue
+        m_tool = re_mod.match(r"^T(\d+)C([0-9.]+)", line)
+        if m_tool:
+            tool_id = f"T{m_tool.group(1)}"
+            tool_diam_mm[tool_id] = float(m_tool.group(2))
+            continue
+
+    # Second pass for coordinates.
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(";"):
+            continue
+
+        m_select = re_mod.match(r"^T(\d+)\s*$", line)
+        if m_select:
+            current_tool = f"T{m_select.group(1)}"
+            continue
+
+        if "X" not in line or "Y" not in line:
+            continue
+
+        coords = re_mod.findall(r"X([-\d.]+)Y([-\d.]+)", line)
+        if not coords or current_tool is None:
+            continue
+        diam = tool_diam_mm.get(current_tool)
+        if diam is None:
+            continue
+        r = diam / 2.0
+
+        for xs, ys in coords:
+            gx = float(xs)
+            gy = float(ys)
+            lx = gx - PATCH_INIT_PANEL_ORIGIN_X_MM
+            ly = -gy - OY_TOP_MM
+            holes.append((lx, ly, r))
+
+    return holes
+
+
+def _gerber_x46_to_mm(val: int) -> float:
+    """Convert Gerber 4.6 format (4 int, 6 decimal) to mm."""
+    return val / 1e6
+
+
+def _load_sd_slot_from_edge_cuts() -> tuple[float, float, float, float] | None:
+    """Load SD card holder cutout from blank-Edge_Cuts.gbr as panel-local rect.
+
+    Returns (x, y, width, height) in panel-local mm, or None if the Edge_Cuts
+    file is missing or the slot cannot be identified. The coordinate system
+    matches the NPTH drill parsing helpers: origin at the top-left of the panel,
+    X to the right, Y down.
+    """
+    path = _panel_assets_edge_cuts_path()
+    if not path.exists():
+        return None
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+
+    import re as re_mod
+
+    ox = PATCH_INIT_PANEL_ORIGIN_X_MM
+    oy_top = OY_TOP_MM
+
+    points: list[tuple[float, float]] = []
+    for match in re_mod.finditer(r"X(-?\d+)Y(-?\d+)", text, re_mod.IGNORECASE):
+        gx = _gerber_x46_to_mm(int(match.group(1)))
+        gy = _gerber_x46_to_mm(int(match.group(2)))
+        lx = gx - ox
+        ly = -gy - oy_top
+        points.append((lx, ly))
+
+    # Find all axis-aligned rectangles (consecutive 4 points that form a bbox).
+    # Board outline is 50.8 x 128.5 mm; SD slot is ~3.2 x 12.8 mm.
+    rects: list[tuple[float, float, float, float]] = []
+    for i in range(len(points) - 3):
+        xs = [points[i + j][0] for j in range(4)]
+        ys = [points[i + j][1] for j in range(4)]
+        xmin, xmax = min(xs), max(xs)
+        ymin, ymax = min(ys), max(ys)
+        w = xmax - xmin
+        h = ymax - ymin
+        if w >= 2.0 and h >= 2.0:
+            rects.append((xmin, ymin, w, h))
+
+    # The SD slot is the rectangle that is not the board outline (50.8 x 128.5)
+    for (x, y, w, h) in rects:
+        if 2.0 <= w <= 5.0 and 8.0 <= h <= 18.0:
+            return (x, y, w, h)
+
+    return None
+
+
 def build_panel_svg() -> str:
     """Render the full panel SVG as a string."""
     screw_slots = _format_screw_slots()
-    svg = PANEL_TEMPLATE.substitute(SCREW_SLOTS=screw_slots)
+    pot_r = POT_PANEL_DIAMETER_MM / 2.0
+    switch_b7_r = SWITCH_B7_PANEL_DIAMETER_MM / 2.0
+    jack_r = JACK_PANEL_DIAMETER_MM / 2.0
 
-    # Ensure all circular drill holes render as solid black rather than letting
-    # the background pattern show through.
+    # PITCH LOCK / B_8 uses the jack-family 6.2 mm NPTH drill (T4) for its
+    # panel cutout. Enlarge the decorative white outline so it fully encircles
+    # the 6.2 mm hole and remains visible outside the solid black NPTH overlay.
+    switch_b8_r = JACK_PANEL_DIAMETER_MM / 2.0 + 0.25
+
+    svg = PANEL_TEMPLATE.substitute(
+        SCREW_SLOTS=screw_slots,
+        POT_R=f"{pot_r:.3f}",
+        SWITCH_R_B7=f"{switch_b7_r:.3f}",
+        SWITCH_R_B8=f"{switch_b8_r:.3f}",
+        JACK_R=f"{jack_r:.3f}",
+        POT_DIAMETER_MM=f"{POT_PANEL_DIAMETER_MM:.1f}",
+        SWITCH_B7_DIAMETER_MM=f"{SWITCH_B7_PANEL_DIAMETER_MM:.1f}",
+        SWITCH_B8_DIAMETER_MM=f"{SWITCH_B8_PANEL_DIAMETER_MM:.1f}",
+        JACK_DIAMETER_MM=f"{JACK_PANEL_DIAMETER_MM:.1f}",
+    )
+
+    # Ensure all circular drill holes from the panel artwork render as solid
+    # black rather than letting the background pattern show through.
     svg = re.sub(
         r'(<circle\b[^>]*?)\s+fill="none"([^>]*?stroke="#ffffff"[^>]*?/>)',
         r'\1 fill="#000000"\2',
         svg,
     )
+
+    # Additionally, overlay solid black geometry for all mechanical cutouts
+    # derived from the Patch.Init manufacturing files:
+    # - Circular NPTH drill holes from blank-NPTH.drl.
+    # - Rectangular SD card holder slot from blank-Edge_Cuts.gbr.
+    # This guarantees that all PCB drill/cut regions are represented as solid
+    # black areas in the SVG, even if the template artwork is edited.
+    overlay_blocks: list[str] = []
+
+    holes = _load_drill_holes_from_npht()
+    if holes:
+        npth_lines = [
+            '  <!-- NPTH drill layer overlay: solid black holes -->',
+            '  <g id="npth_drills" fill="#000000" stroke="none">',
+        ]
+        for (x, y, r) in holes:
+            npth_lines.append(f'    <circle cx="{x:.3f}" cy="{y:.3f}" r="{r:.3f}" />')
+        npth_lines.append("  </g>")
+        overlay_blocks.append("\n".join(npth_lines))
+
+    sd_slot = _load_sd_slot_from_edge_cuts()
+    if sd_slot is not None:
+        sx, sy, sw, sh = sd_slot
+        sd_lines = [
+            "  <!-- SD card holder cutout overlay: solid black slot from Edge_Cuts -->",
+            '  <g id="sd_slot" fill="#000000" stroke="none">',
+            f'    <rect x="{sx:.3f}" y="{sy:.3f}" width="{sw:.3f}" height="{sh:.3f}" />',
+            "  </g>",
+        ]
+        overlay_blocks.append("\n".join(sd_lines))
+
+    if overlay_blocks:
+        overlay = "\n".join(overlay_blocks) + "\n"
+        svg = svg.replace("</svg>\n", overlay + "</svg>\n")
+
     return svg
 
 
@@ -291,6 +653,7 @@ def main() -> None:
 
     svg = build_panel_svg()
     output_path = args.output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(svg, encoding="utf-8")
     print(f"Wrote Resynthesis panel SVG \u2192 {output_path}")
 

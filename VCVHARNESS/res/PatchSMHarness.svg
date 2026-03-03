@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Panel design is explicitly for a physical Eurorack module (e.g. front-panel fabrication),
+     not for VCV Rack. This same SVG is used as the module panel in VCV Rack for display only. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="380" viewBox="0 0 60 380">
+  <defs>
+    <!-- Printable cell pattern: vector grid, lines at least 1mm equivalent, fully solid (no opacity).
+         shape-rendering: crispEdges so traces are either fully on or not (vector-print friendly). -->
+    <pattern id="panelCellPattern" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">
+      <path fill="none" stroke="#282828" stroke-width="2" shape-rendering="crispEdges" d="M0 0v12 M0 0h12"/>
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="60" height="380" fill="#202020"/>
+  <rect x="2" y="2" width="56" height="376" fill="url(#panelCellPattern)" stroke="none"/>
+  <rect x="2" y="2" width="56" height="376" fill="none" stroke="#606060" stroke-width="1"/>
+
+  <text x="30" y="20" fill="#ffffff" font-family="Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle">
+    Daisy Patch SM
+  </text>
+  <text x="30" y="32" fill="#cccccc" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle">
+    VCV Harness
+  </text>
+
+  <!-- Audio I/O labels -->
+  <text x="15" y="60" fill="#cccccc" font-family="Helvetica, Arial, sans-serif" font-size="6" text-anchor="middle">
+    IN L
+  </text>
+  <text x="45" y="60" fill="#cccccc" font-family="Helvetica, Arial, sans-serif" font-size="6" text-anchor="middle">
+    IN R
+  </text>
+  <text x="15" y="120" fill="#cccccc" font-family="Helvetica, Arial, sans-serif" font-size="6" text-anchor="middle">
+    OUT L
+  </text>
+  <text x="45" y="120" fill="#cccccc" font-family="Helvetica, Arial, sans-serif" font-size="6" text-anchor="middle">
+    OUT R
+  </text>
+
+  <!-- CV inputs -->
+  <text x="10" y="160" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV1</text>
+  <text x="10" y="176" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV2</text>
+  <text x="10" y="192" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV3</text>
+  <text x="10" y="208" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV4</text>
+  <text x="10" y="224" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV5</text>
+  <text x="10" y="240" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV6</text>
+  <text x="10" y="256" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV7</text>
+  <text x="10" y="272" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV8</text>
+
+  <!-- CV outputs -->
+  <text x="10" y="304" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV OUT 1</text>
+  <text x="10" y="320" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">CV OUT 2</text>
+
+  <!-- Switch labels -->
+  <text x="10" y="344" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">B7 (Reverb)</text>
+  <text x="10" y="360" fill="#bbbbbb" font-family="Helvetica, Arial, sans-serif" font-size="6">B8 (CV Swap)</text>
+</svg>
+

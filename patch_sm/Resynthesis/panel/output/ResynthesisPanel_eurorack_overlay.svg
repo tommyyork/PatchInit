@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Eurorack standard overlay: HP grid (green), rail centers (blue), cut annotations (pink). Panel artwork is embedded underneath. See eurorack_spec/README.md. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50.8 128.5" width="50.8mm" height="128.5mm">
+  <image href="ResynthesisPanel.svg" x="0" y="0" width="50.8" height="128.5" />
+  <g id="eurorack-overlay" opacity="0.7">
+    <!-- Green dotted: 2HP vertical grid (1 HP = 5.08 mm) -->
+    <line x1="0.0" y1="0" x2="0.0" y2="128.5" stroke="#00cc66" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <line x1="10.16" y1="0" x2="10.16" y2="128.5" stroke="#00cc66" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <line x1="20.32" y1="0" x2="20.32" y2="128.5" stroke="#00cc66" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <line x1="30.48" y1="0" x2="30.48" y2="128.5" stroke="#00cc66" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <line x1="40.64" y1="0" x2="40.64" y2="128.5" stroke="#00cc66" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <line x1="50.8" y1="0" x2="50.8" y2="128.5" stroke="#00cc66" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <!-- Neon blue dotted: vertical center of rails when module is mounted -->
+    <line x1="0" y1="3.0" x2="50.8" y2="3.0" stroke="#00d4ff" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <line x1="0" y1="125.5" x2="50.8" y2="125.5" stroke="#00d4ff" stroke-width="0.3" stroke-dasharray="1.2 0.8" />
+    <!-- Neon pink: size at each cut center + panel dimensions -->
+    <text x="6.500" y="3.000" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">3.0mm ⌀</text>
+    <text x="8.500" y="3.000" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">3.0mm ⌀</text>
+    <text x="25.400" y="19.252" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">3.2mm ⌀</text>
+    <text x="11.176" y="22.904" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">7.2mm ⌀</text>
+    <text x="39.650" y="22.904" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">7.2mm ⌀</text>
+    <text x="25.744" y="39.894" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">3.2×12.8mm</text>
+    <text x="11.176" y="42.027" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">7.2mm ⌀</text>
+    <text x="39.650" y="42.027" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">7.2mm ⌀</text>
+    <text x="8.650" y="59.288" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">5.5mm ⌀</text>
+    <text x="42.155" y="59.288" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="25.503" y="61.957" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="7.150" y="84.562" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="19.317" y="84.562" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="31.483" y="84.562" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="43.650" y="84.562" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="7.150" y="98.312" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="19.317" y="98.312" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="31.483" y="98.312" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="43.650" y="98.312" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="7.150" y="111.900" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="19.317" y="111.900" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="31.483" y="111.900" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="43.650" y="111.900" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">6.2mm ⌀</text>
+    <text x="42.100" y="125.500" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">3.0mm ⌀</text>
+    <text x="44.100" y="125.500" font-size="2.3" fill="#ff00ff" text-anchor="middle" dominant-baseline="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">3.0mm ⌀</text>
+    <!-- Original hardware names beneath panel labels -->
+    <text x="11.176" y="28.404" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_1</text>
+    <text x="11.176" y="31.154" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">VR_1</text>
+    <text x="39.650" y="28.404" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_2</text>
+    <text x="39.650" y="31.154" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">VR_2</text>
+    <text x="11.176" y="47.527" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_3</text>
+    <text x="11.176" y="50.277" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">VR_3</text>
+    <text x="39.650" y="47.527" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_4</text>
+    <text x="39.650" y="50.277" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">VR_4</text>
+    <text x="8.650" y="64.788" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B7</text>
+    <text x="8.650" y="67.538" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">SW_1</text>
+    <text x="25.400" y="64.788" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B8</text>
+    <text x="25.400" y="67.538" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">SW_2</text>
+    <text x="42.155" y="64.788" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">C10</text>
+    <text x="42.155" y="67.538" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_CVOUT1</text>
+    <text x="7.150" y="90.062" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B10</text>
+    <text x="7.150" y="92.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_GATEIN1</text>
+    <text x="19.317" y="90.062" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B9</text>
+    <text x="19.317" y="92.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_GATEIN2</text>
+    <text x="31.483" y="90.062" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B5</text>
+    <text x="31.483" y="92.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_GATEOUT1</text>
+    <text x="43.650" y="90.062" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B6</text>
+    <text x="43.650" y="92.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_GATEOUT2</text>
+    <text x="7.150" y="103.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_5</text>
+    <text x="7.150" y="106.562" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_CV1</text>
+    <text x="19.317" y="103.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_6</text>
+    <text x="19.317" y="106.562" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_CV2</text>
+    <text x="31.483" y="103.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_7</text>
+    <text x="31.483" y="106.562" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_CV3</text>
+    <text x="43.650" y="103.812" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">CV_8</text>
+    <text x="43.650" y="106.562" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_CV4</text>
+    <text x="7.150" y="117.400" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B4</text>
+    <text x="7.150" y="120.150" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_LIN1</text>
+    <text x="19.317" y="117.400" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B3</text>
+    <text x="19.317" y="120.150" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_RIN1</text>
+    <text x="31.483" y="117.400" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B2</text>
+    <text x="31.483" y="120.150" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_LOUT1</text>
+    <text x="43.650" y="117.400" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">B1</text>
+    <text x="43.650" y="120.150" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">J_ROUT1</text>
+    <text x="25.400" y="24.752" font-size="2.75" fill="#89cff0" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">LED_1</text>
+    <text x="25.4" y="127.5" font-size="2.3" fill="#ff00ff" text-anchor="middle" font-family="Gidole, 'DIN Alternate', 'DIN 2014', sans-serif">panel 50.8 × 128.5 mm</text>
+  </g>
+</svg>

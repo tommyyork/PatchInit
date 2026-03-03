@@ -1,0 +1,62 @@
+# Test target: run the VCV Harness plugin in a dummy Rack environment for 10+ seconds.
+# Same validation the VCV Rack VST receives in a DAW.
+# Requires: Rack source in dep/Rack (see dep/README.md).
+# Note: res/PatchSMHarness.svg is designed for a physical Eurorack module, not VCV Rack.
+
+RUN_SECONDS ?= 10
+RACK_SRC := dep/Rack
+PATCH_DIR := test/patch
+VCV_FILE := test/harness_test.vcv
+TEST_USER := test/user
+PLUGIN_BUILD_DIR := $(CURDIR)
+OUT_DIR := $(CURDIR)/out
+
+.PHONY: test test-vcv test-with-screenshot
+
+test: test-vcv
+	@test -d "$(RACK_SRC)" || (echo "Rack source required. See dep/README.md"; exit 1)
+	@echo "Applying headless run-seconds to Rack standalone..."
+	@cp "$(CURDIR)/dep/standalone-run-seconds.cpp" "$(RACK_SRC)/adapters/standalone.cpp"
+	@echo "Building Rack (dep + libRack + standalone)..."
+	$(MAKE) -C "$(RACK_SRC)" dep
+	$(MAKE) -C "$(RACK_SRC)"
+	@echo "Building VCVHARNESS plugin with RACK_DIR=$(RACK_SRC)..."
+	$(MAKE) RACK_DIR="$(CURDIR)/$(RACK_SRC)" --no-print-directory
+	@echo "Running Rack headless for $(RUN_SECONDS)s with Patch SM Harness..."
+	RUN_SECONDS="$(RUN_SECONDS)" \
+	RACK_BIN="$(CURDIR)/$(RACK_SRC)/Rack" \
+	RACK_SYSTEM_DIR="$(CURDIR)/$(RACK_SRC)" \
+	TEST_USER_DIR="$(CURDIR)/$(TEST_USER)" \
+	PATCH_VCV="$(CURDIR)/$(VCV_FILE)" \
+	PLUGIN_BUILD_DIR="$(PLUGIN_BUILD_DIR)" \
+	bash "$(CURDIR)/test/run_harness_test.sh"
+
+# Same as test but also captures a timestamped screenshot of the VCV unit to out/ (requires display)
+test-with-screenshot: test-vcv
+	@test -d "$(RACK_SRC)" || (echo "Rack source required. See dep/README.md"; exit 1)
+	@echo "Applying headless run-seconds to Rack standalone..."
+	@cp "$(CURDIR)/dep/standalone-run-seconds.cpp" "$(RACK_SRC)/adapters/standalone.cpp"
+	@echo "Building Rack (dep + libRack + standalone)..."
+	$(MAKE) -C "$(RACK_SRC)" dep
+	$(MAKE) -C "$(RACK_SRC)"
+	@echo "Building VCVHARNESS plugin with RACK_DIR=$(RACK_SRC)..."
+	$(MAKE) RACK_DIR="$(CURDIR)/$(RACK_SRC)" --no-print-directory
+	@mkdir -p "$(OUT_DIR)"
+	@echo "Running Rack headless then capturing screenshot to $(OUT_DIR)..."
+	RUN_SECONDS="$(RUN_SECONDS)" \
+	CAPTURE_SCREENSHOT=1 \
+	OUT_DIR="$(OUT_DIR)" \
+	RACK_BIN="$(CURDIR)/$(RACK_SRC)/Rack" \
+	RACK_SYSTEM_DIR="$(CURDIR)/$(RACK_SRC)" \
+	TEST_USER_DIR="$(CURDIR)/$(TEST_USER)" \
+	PATCH_VCV="$(CURDIR)/$(VCV_FILE)" \
+	PLUGIN_BUILD_DIR="$(PLUGIN_BUILD_DIR)" \
+	bash "$(CURDIR)/test/run_harness_test.sh"
+
+# Build the .vcv patch file (tar.zst of test/patch/patch.json)
+test-vcv: $(VCV_FILE)
+
+$(VCV_FILE): $(PATCH_DIR)/patch.json
+	@mkdir -p test
+	@(cd "$(PATCH_DIR)" && tar cf - . | zstd -q -o "$(CURDIR)/$(VCV_FILE)")
+	@echo "Created $(VCV_FILE)"

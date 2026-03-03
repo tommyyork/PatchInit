@@ -1,0 +1,63 @@
+--- a/adapters/standalone.cpp
++++ b/adapters/standalone.cpp
+@@ -31,6 +31,8 @@
+ #include <osdialog.h>
+ 
++#include <chrono>
++#include <thread>
+ #if defined ARCH_MAC
+ 	#define GLFW_EXPOSE_NATIVE_COCOA
+ 	#include <GLFW/glfw3native.h> // for glfwGetOpenedFilenames()
+@@ -69,6 +69,7 @@ 	std::string patchPath;
+ 	std::string patchPath;
+ 	bool screenshot = false;
+ 	float screenshotZoom = 1.f;
++	int runSeconds = 0;
+ 	const std::string appInfo = APP_NAME + " " + APP_EDITION_NAME + " " + APP_VERSION + " " + APP_OS_NAME + " " + APP_CPU_NAME;
+ 
+ 	// Parse command line arguments
+@@ -79,6 +80,7 @@
+ 		{"screenshot", required_argument, NULL, 't'},
+ 		{"system", required_argument, NULL, 's'},
+ 		{"user", required_argument, NULL, 'u'},
++		{"run-seconds", required_argument, NULL, 'r'},
+ 		{"version", no_argument, NULL, 'v'},
+ 		{"help", no_argument, NULL, 256},
+ 		{NULL, 0, NULL, 0}
+@@ -88,7 +90,7 @@
+ 	int c;
+ 	opterr = 0;
+ 
+-	while ((c = getopt_long(argc, argv, "adht:s:u:vp:", longOptions, NULL)) != -1) {
++	while ((c = getopt_long(argc, argv, "adht:s:u:r:vp:", longOptions, NULL)) != -1) {
+ 		switch (c) {
+ 			case 'a': {
+ 				settings::safeMode = true;
+@@ -105,6 +107,12 @@
+ 			case 'u': {
+ 				asset::userDir = optarg;
+ 			} break;
++			case 'r': {
++				runSeconds = std::max(0, std::atoi(optarg));
++			} break;
+ 			case 'v': {
+ 				std::fprintf(stderr, "%s\n", appInfo.c_str());
+ 				return 0;
+@@ -263,8 +271,13 @@
+ 	APP->engine->startFallbackThread();
+ 
+ 	// Run context
+ 	if (settings::headless) {
+-		printf("Press enter to exit.\n");
+-		getchar();
++		if (runSeconds > 0) {
++			for (int i = 0; i < runSeconds; i++) {
++				std::this_thread::sleep_for(std::chrono::seconds(1));
++			}
++		} else {
++			printf("Press enter to exit.\n");
++			getchar();
++		}
+ 	}
+ 	else if (screenshot) {
+ 

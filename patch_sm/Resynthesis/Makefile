@@ -35,33 +35,37 @@ include $(SYSTEM_FILES_DIR)/Makefile
 # Panel previews: generate PNGs from the SVG panel and Eurorack overlay.
 # Requires Inkscape. Set INKSCAPE=/path/to/inkscape if not in PATH (e.g. macOS: /Applications/Inkscape.app/Contents/MacOS/inkscape).
 INKSCAPE ?= inkscape
+PANEL_OUTPUT_DIR := panel/output
 
-.PHONY: panel svg tests test_resynth test_cv_sweeps test_fluff test_panel resynthesis-clean clean
+.PHONY: panel svg tests test_resynth test_cv_sweeps test_fluff test_harmonic test_panel resynthesis-clean clean
 
 # High-level panel target:
 # 1. Regenerate the canonical ResynthesisPanel.svg from the generator script.
 # 2. Regenerate the Eurorack overlay SVG from the panel SVG.
 # 3. Export PNGs for the panel and the overlay.
-panel: panel/ResynthesisPanel.svg panel/ResynthesisPanel_eurorack_overlay.svg panel/ResynthesisPanel.png panel/ResynthesisPanel_eurorack_overlay.png
+panel: $(PANEL_OUTPUT_DIR)/ResynthesisPanel.svg \
+       $(PANEL_OUTPUT_DIR)/ResynthesisPanel_eurorack_overlay.svg \
+       $(PANEL_OUTPUT_DIR)/ResynthesisPanel.png \
+       $(PANEL_OUTPUT_DIR)/ResynthesisPanel_eurorack_overlay.png
 
-# Generate the canonical panel SVG from Python.
-panel/ResynthesisPanel.svg: panel/generate_resynthesis_panel_svg.py
-	@echo "Generating canonical ResynthesisPanel.svg from generator..."
-	$(PYTHON) panel/generate_resynthesis_panel_svg.py
+# Generate the canonical panel SVG from Python into the panel output directory.
+$(PANEL_OUTPUT_DIR)/ResynthesisPanel.svg: panel/generate_resynthesis_panel_svg.py
+	@echo "Generating canonical ResynthesisPanel.svg into $(PANEL_OUTPUT_DIR)..."
+	$(PYTHON) panel/generate_resynthesis_panel_svg.py -o $@
 
 # Generate Eurorack overlay SVG (panel + HP grid + rail centers + annotations).
-panel/ResynthesisPanel_eurorack_overlay.svg: panel/ResynthesisPanel.svg panel/render_eurorack_overlay.py
-	@echo "Generating Eurorack overlay SVG..."
-	$(PYTHON) panel/render_eurorack_overlay.py panel/ResynthesisPanel.svg -o panel/ResynthesisPanel_eurorack_overlay.svg
+$(PANEL_OUTPUT_DIR)/ResynthesisPanel_eurorack_overlay.svg: $(PANEL_OUTPUT_DIR)/ResynthesisPanel.svg panel/render_eurorack_overlay.py
+	@echo "Generating Eurorack overlay SVG into $(PANEL_OUTPUT_DIR)..."
+	$(PYTHON) panel/render_eurorack_overlay.py $< -o $@
 
 # Ensure the Eurorack overlay SVG is up to date before exporting PNGs from the SVGs.
-panel/ResynthesisPanel.png: panel/ResynthesisPanel.svg panel/ResynthesisPanel_eurorack_overlay.svg
-	@echo "Generating panel PNG from SVG (1200 dpi, high-res)..."
-	$(INKSCAPE) panel/ResynthesisPanel.svg --export-type=png --export-dpi=1200 --export-filename=panel/ResynthesisPanel.png
+$(PANEL_OUTPUT_DIR)/ResynthesisPanel.png: $(PANEL_OUTPUT_DIR)/ResynthesisPanel.svg $(PANEL_OUTPUT_DIR)/ResynthesisPanel_eurorack_overlay.svg
+	@echo "Generating panel PNG from SVG (1200 dpi, high-res) into $(PANEL_OUTPUT_DIR)..."
+	$(INKSCAPE) $< --export-type=png --export-dpi=1200 --export-filename=$@
 
-panel/ResynthesisPanel_eurorack_overlay.png: panel/ResynthesisPanel_eurorack_overlay.svg
-	@echo "Generating Eurorack overlay PNG (1200 dpi, high-res)..."
-	$(INKSCAPE) panel/ResynthesisPanel_eurorack_overlay.svg --export-type=png --export-dpi=1200 --export-filename=panel/ResynthesisPanel_eurorack_overlay.png
+$(PANEL_OUTPUT_DIR)/ResynthesisPanel_eurorack_overlay.png: $(PANEL_OUTPUT_DIR)/ResynthesisPanel_eurorack_overlay.svg
+	@echo "Generating Eurorack overlay PNG (1200 dpi, high-res) into $(PANEL_OUTPUT_DIR)..."
+	$(INKSCAPE) $< --export-type=png --export-dpi=1200 --export-filename=$@
 
 # Offline test (host build): run phase vocoder on a WAV with diatonic pitch steps.
 # CV sweep test: run 8 tests, one per CV parameter, with descriptive output filenames.
@@ -74,7 +78,7 @@ DOC_DIR := doc
 test_binaries:
 	$(MAKE) -C test all
 
-tests: test_resynth test_cv_sweeps test_fluff test_panel
+tests: test_resynth test_cv_sweeps test_fluff test_harmonic test_panel
 
 test_resynth:
 	$(MAKE) -C test run
@@ -84,6 +88,9 @@ test_cv_sweeps:
 
 test_fluff:
 	$(MAKE) -C test fluff
+
+test_harmonic:
+	$(MAKE) -C test harmonic
 
 test_panel:
 	$(PYTHON) panel/test_panel_alignment.py
@@ -98,10 +105,7 @@ svg:
 resynthesis-clean:
 	rm -rf build
 	rm -rf test/out
-	rm -f panel/ResynthesisPanel.svg \
-	      panel/ResynthesisPanel.png \
-	      panel/ResynthesisPanel_eurorack_overlay.png \
-	      panel/ResynthesisPanel_eurorack_overlay.svg
+	rm -rf panel/output
 	rm -f $(DOC_DIR)/Resynthesis_BlockDiagram_USLetter.pdf \
 	      $(DOC_DIR)/Resynthesis_BlockDiagram_USLetter.svg \
 	      $(DOC_DIR)/Resynthesis_BlockDiagram.dot

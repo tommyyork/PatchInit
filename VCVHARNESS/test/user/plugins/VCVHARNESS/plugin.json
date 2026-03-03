@@ -1,0 +1,25 @@
+{
+  "slug": "VCVHARNESS",
+  "name": "VCV Daisy Patch SM Harness",
+  "version": "2.0.0",
+  "license": "MIT",
+  "brand": "DaisyExamples",
+  "author": "DaisyExamples / Cursor agent",
+  "authorEmail": "",
+  "authorUrl": "",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "modules": [
+    {
+      "slug": "PatchSMHarness",
+      "name": "Patch SM Harness",
+      "description": "Virtualized Daisy Patch SM running the Resynthesis phase-vocoder in VCV Rack.",
+      "tags": [
+        "Effect",
+        "Granular",
+        "Experimental"
+      ]
+    }
+  ]
+}
+

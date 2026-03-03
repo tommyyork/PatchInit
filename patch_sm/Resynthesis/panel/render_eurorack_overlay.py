@@ -31,6 +31,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+HERE = Path(__file__).parent
+
+# Patch.Init panel origin (from blank-Edge_Cuts.gbr): board left/top in Gerber mm.
+# These constants match the values used in generate_resynthesis_panel_svg.py so
+# that NPTH drills and Edge_Cuts geometry can be mapped into the same
+# panel-local coordinate system as the SVG artwork.
+PATCH_INIT_PANEL_ORIGIN_X_MM = 26.545
+PATCH_INIT_PANEL_ORIGIN_Y_MM = -27.095  # Gerber/Excellon Y is negative downward
+OY_TOP_MM = 27.095  # -Gerber Y for the top edge
+
 # Eurorack 3U (Doepfer A-100 / eurorack_spec/README.md)
 HP_MM = 5.08
 PANEL_HEIGHT_MM = 128.5
@@ -40,15 +50,17 @@ RAIL_CENTER_FROM_BOTTOM_MM = 3.0  # => bottom rail center at PANEL_HEIGHT_MM - 3
 # Overlay style (scaled up for visibility when combined with panel)
 GREEN_HP_LINES = "#00cc66"
 BLUE_RAIL_LINES = "#00d4ff"
-PINK_ANNOTATIONS = "#ff10f0"
+PINK_ANNOTATIONS = "#ff00ff"  # neon pink for dimension annotations
 STROKE_WIDTH = 0.3
 DASH_ARRAY = "1.2 0.8"
-ANNOTATION_FONT_SIZE = 3.0
+# 3.0 mm ≈ 8.5 pt; make dimension text ~2 pt smaller.
+ANNOTATION_FONT_SIZE = 2.3
 OVERLAY_FONT_FAMILY = "Gidole, 'DIN Alternate', 'DIN 2014', sans-serif"
 
 # Smaller font for original hardware names shown beneath panel labels.
-ORIGINAL_NAME_FONT_SIZE = 2.4
-ORIGINAL_NAME_COLOR = "#0066ff"  # electric deep blue for original labels
+# 2.4 mm ≈ 6.8 pt; make sublabels ~1 pt larger.
+ORIGINAL_NAME_FONT_SIZE = 2.75
+ORIGINAL_NAME_COLOR = "#89cff0"  # baby blue for original labels
 # Vertical clearance (mm) between panel label baseline and original-name overlay.
 ORIGINAL_NAME_CLEARANCE_MM = 1.0
 
@@ -133,6 +145,142 @@ class Cut:
     w: float | None    # width for rects (mm)
     h: float | None    # height for rects (mm)
     rx: float | None   # corner radius for rects (mm)
+
+
+def _panel_assets_drill_path() -> Path:
+    """Return the path to the Patch.Init NPTH drill file in the panel assets."""
+    return HERE / "assets" / "patch_init_gerbers" / "blank-NPTH.drl"
+
+
+def _panel_assets_edge_cuts_path() -> Path:
+    """Return the path to the Patch.Init Edge_Cuts file in the panel assets."""
+    return HERE / "assets" / "patch_init_gerbers" / "blank-Edge_Cuts.gbr"
+
+
+def _gerber_x46_to_mm(val: int) -> float:
+    """Convert Gerber 4.6 format (4 int, 6 decimal) to mm."""
+    return val / 1e6
+
+
+def _load_cuts_from_drill_and_edge_cuts() -> list[Cut]:
+    """Load panel cuts from Patch.Init NPTH drill and Edge_Cuts Gerbers.
+
+    This uses the same panel-local coordinate system as the alignment tests and
+    panel generator: origin at the top-left of the panel, X to the right, Y
+    down. Circular NPTH drills become `Cut(kind="circle")` entries and the SD
+    card slot from Edge_Cuts becomes a rectangular `Cut(kind="rect")`.
+    """
+    cuts: list[Cut] = []
+
+    # 1) Circular NPTH drills from blank-NPTH.drl
+    drill_path = _panel_assets_drill_path()
+    if drill_path.exists():
+        text = drill_path.read_text(encoding="utf-8", errors="ignore")
+
+        import re as re_mod
+
+        tool_diam_mm: dict[str, float] = {}
+        current_tool: str | None = None
+
+        # Tool definitions: T1C3.000, T2C3.200, ...
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith(";"):
+                continue
+            m_tool = re_mod.match(r"^T(\d+)C([0-9.]+)", line)
+            if m_tool:
+                tool_id = f"T{m_tool.group(1)}"
+                tool_diam_mm[tool_id] = float(m_tool.group(2))
+                continue
+
+        # Second pass for coordinates.
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith(";"):
+                continue
+
+            m_select = re_mod.match(r"^T(\d+)\s*$", line)
+            if m_select:
+                current_tool = f"T{m_select.group(1)}"
+                continue
+
+            if "X" not in line or "Y" not in line:
+                continue
+
+            coords = re_mod.findall(r"X([-\d.]+)Y([-\d.]+)", line)
+            if not coords or current_tool is None:
+                continue
+            diam = tool_diam_mm.get(current_tool)
+            if diam is None:
+                continue
+            r = diam / 2.0
+
+            for xs, ys in coords:
+                gx = float(xs)
+                gy = float(ys)
+                lx = gx - PATCH_INIT_PANEL_ORIGIN_X_MM
+                ly = -gy - OY_TOP_MM
+                cuts.append(
+                    Cut(
+                        kind="circle",
+                        cx=lx,
+                        cy=ly,
+                        r=r,
+                        w=None,
+                        h=None,
+                        rx=None,
+                    )
+                )
+
+    # 2) SD card slot from blank-Edge_Cuts.gbr (rectangular cutout).
+    edge_path = _panel_assets_edge_cuts_path()
+    if edge_path.exists():
+        text = edge_path.read_text(encoding="utf-8", errors="ignore")
+
+        import re as re_mod
+
+        ox = PATCH_INIT_PANEL_ORIGIN_X_MM
+        oy_top = OY_TOP_MM
+
+        points: list[tuple[float, float]] = []
+        for match in re_mod.finditer(r"X(-?\d+)Y(-?\d+)", text, re_mod.IGNORECASE):
+            gx_i = int(match.group(1))
+            gy_i = int(match.group(2))
+            gx = _gerber_x46_to_mm(gx_i)
+            gy = _gerber_x46_to_mm(gy_i)
+            lx = gx - ox
+            ly = -gy - oy_top
+            points.append((lx, ly))
+
+        # Find all axis-aligned rectangles (consecutive 4 points that form a bbox).
+        rects: list[tuple[float, float, float, float]] = []
+        for i in range(len(points) - 3):
+            xs = [points[i + j][0] for j in range(4)]
+            ys = [points[i + j][1] for j in range(4)]
+            xmin, xmax = min(xs), max(xs)
+            ymin, ymax = min(ys), max(ys)
+            w = xmax - xmin
+            h = ymax - ymin
+            if w >= 2.0 and h >= 2.0:
+                rects.append((xmin, ymin, w, h))
+
+        # The SD slot is the rectangle that is not the board outline (50.8 x 128.5).
+        for (x, y, w, h) in rects:
+            if 2.0 <= w <= 5.0 and 8.0 <= h <= 18.0:
+                cuts.append(
+                    Cut(
+                        kind="rect",
+                        cx=x + w / 2.0,
+                        cy=y + h / 2.0,
+                        r=None,
+                        w=w,
+                        h=h,
+                        rx=0.0,
+                    )
+                )
+                break
+
+    return cuts
 
 
 def extract_cuts(svg_path: Path) -> list[Cut]:
@@ -357,8 +505,8 @@ def build_overlay_svg(
                     )
                     target_y = ly + lfs + ORIGINAL_NAME_CLEARANCE_MM
 
-            # Support simple two-line labels using '\\n' (e.g. \"CV_OUT_1\\nC10\").
-            parts = name.split("\\n")
+            # Support simple two-line labels using '\n' (e.g. "CV_OUT_1\nC10").
+            parts = name.split("\n")
             if len(parts) == 1:
                 lines.append(
                     f'    <text x="{cx:.3f}" y="{target_y:.3f}" font-size="{ORIGINAL_NAME_FONT_SIZE}" '
@@ -394,8 +542,8 @@ def main() -> None:
         "panel_svg",
         nargs="?",
         type=Path,
-        default=Path(__file__).parent / "ResynthesisPanel.svg",
-        help="Input panel SVG (default: ResynthesisPanel.svg in script dir)",
+        default=HERE / "output" / "ResynthesisPanel.svg",
+        help="Input panel SVG (default: output/ResynthesisPanel.svg in script dir)",
     )
     parser.add_argument(
         "-o", "--output",
@@ -419,7 +567,13 @@ def main() -> None:
     if w <= 0 or h <= 0:
         raise SystemExit(f"Invalid panel dimensions: {w} x {h}")
 
-    cuts = extract_cuts(panel_path)
+    # Prefer canonical manufacturing data from the Patch.Init Gerbers when
+    # available so that cut centers and diameters come directly from the
+    # NPTH drills and Edge_Cuts. Fall back to extracting cuts from the panel
+    # SVG only if the Gerber assets are missing.
+    cuts = _load_cuts_from_drill_and_edge_cuts()
+    if not cuts:
+        cuts = extract_cuts(panel_path)
     hp_count = args.hp
     if hp_count is None:
         hp_count = max(1, int(round(w / HP_MM)))

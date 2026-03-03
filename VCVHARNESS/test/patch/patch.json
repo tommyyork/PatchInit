@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "modules": [
+    {
+      "plugin": "VCVHARNESS",
+      "model": "PatchSMHarness",
+      "id": 1
+    }
+  ],
+  "cables": []
+}

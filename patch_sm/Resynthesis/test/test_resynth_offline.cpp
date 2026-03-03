@@ -108,14 +108,15 @@ static bool process_one_voct_sweep(const char* inputPath)
     }
 
     float drywet = 1.0f;  // 100% wet so output is resynthesized only (no dry mix)
+    // Basic phase-vocoder style resynthesis of the input: neutral
+    // shaping, no sparsity/diffusion, and pure_resynth_mode enabled so
+    // there is no pitch-shift or harmonic overlay.
     resynth.SetSmoothing(0.4f);
     resynth.SetSpectralFlatten(0.0f);
     resynth.SetBrightDark(0.0f);
-    // Defaults chosen to show some metallic character without being too thin
-    resynth.SetSparsity(0.35f);
-    resynth.SetPhaseDiffusion(0.4f);
-    // V/OCT: 0 V = C0 (~16.35 Hz), 1 V = C1 (~32.7 Hz), 2 V = C2 (~65.4 Hz); semitones/12 = volts
-    resynth.SetFundamentalHz(440.0f * powf(2.0f, -4.75f), kSampleRate);
+    resynth.SetSparsity(0.0f);
+    resynth.SetPhaseDiffusion(0.0f);
+    resynth.SetPureResynthMode(true);
 
     const float time_scale = 1.0f;  // neutral (no time stretch) for offline test
 

@@ -106,43 +106,54 @@
   <!-- SD card holder cutout (matches patch_init_gerbers/blank-Edge_Cuts.gbr) -->
   <rect x="24.14" y="33.493" width="3.208" height="12.802" fill="none" stroke="#ffffff" stroke-width="0.2" />
 
-  <!-- Pots CV_1-CV_4 (7.2 mm) -->
-  <circle cx="11.176" cy="22.904" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="39.65" cy="22.904" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="11.176" cy="42.027" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
-  <circle cx="39.65" cy="42.027" r="3.6" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <!-- Pots CV_1-CV_4 (9MM_SNAP-IN_POT… → 7.5 mm panel holes) -->
+  <circle cx="11.176" cy="22.904" r="3.750" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="22.904" r="3.750" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="11.176" cy="42.027" r="3.750" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="39.65" cy="42.027" r="3.750" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
 
   <!-- Labels beneath pots row 1 (y >= 26.5), font 3.6 mm (>= 10 pt); clear of 12mm knob -->
   <text x="11.176" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DRY / WET</text>
   <text x="39.65" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">SMOOTH</text>
 
-  <!-- Labels beneath pots row 2 (y >= 45.6); clear of knob. CV_4 labeled COLOR -->
-  <text x="11.176" y="52" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">FLATTEN</text>
+  <!-- Labels beneath pots row 2 (y >= 45.6); clear of knob. CV_3 labeled FLUFF, CV_4 labeled COLOR -->
+  <text x="11.176" y="52" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">FLUFF</text>
   <text x="39.65" y="52" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">COLOR</text>
 
   <!-- T2 LED; T3/T4 jacks and switches -->
   <circle cx="25.4" cy="19.252" r="1.6" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="8.65" cy="59.288" r="2.75" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="7.15" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="19.317" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="25.503" cy="61.957" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="31.483" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="42.155" cy="59.288" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="84.562" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="98.312" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
-  <circle cx="43.65" cy="111.9" r="3.1" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <!-- B_7 (MAX COMP) uses TL1105… footprint → 5.5 mm panel hole.
+       B_8 (PITCH LOCK) uses a toggle on the jack-family 6.2 mm drill → 6.2 mm panel hole. -->
+  <circle cx="8.65" cy="59.288" r="2.750" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
+  <circle cx="25.503" cy="61.957" r="3.400" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
 
-  <!-- MAX COMP (8.65, 59.288): label beneath 62.04; when engaged, compressor uses negative-ratio (Omnipressor-style) for near-full volume while preserving dynamics -->
-  <text x="8.65" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">"MAX COMP"</text>
+  <!-- All jacks use S_JACK footprints → 6.3 mm panel holes -->
+  <circle cx="7.15" cy="84.562" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="98.312" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="7.15" cy="111.9" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="84.562" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="98.312" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="19.317" cy="111.9" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="84.562" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="98.312" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="31.483" cy="111.9" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="42.155" cy="59.288" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="84.562" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="98.312" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
+  <circle cx="43.65" cy="111.9" r="3.150" fill="#000000" stroke="#ffffff" stroke-width="0.2" />
 
-  <!-- Plateau (42.155, 59.288): label beneath 62.39; slightly smaller font than other labels but >= 10 pt -->
-  <text x="42.155" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">PLATEAU</text>
+  <!-- Left switch (B_7, MAX COMP) at (8.65, 59.288): panel label split over two lines -->
+  <text x="8.65" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">MAX</text>
+  <text x="8.65" y="69.53" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">COMP</text>
+
+  <!-- Centre switch (B_8, mode) at (25.503, 61.957): panel label PITCH LOCK, split over two lines.
+       The top line is moved down so that the minimum vertical clearance from the drill center
+       matches the padding used for THOUGHTS and MAX COMP. -->
+  <text x="25.503" y="68.7" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">PITCH</text>
+  <text x="25.503" y="72.23" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">LOCK</text>
+
+  <!-- CV_OUT_1 / C10 jack at (42.155, 59.288): panel label THOUGHTS (rendered as !!! on panel) -->
+  <text x="42.155" y="66" class="panel-text" font-size="3.53" text-anchor="middle" fill="#ffffff">!!!</text>
 
   <!-- 12 jacks: labels OVER each jack, centered. Top row (y=84.562) ? B10, B9, B5, B6 -->
   <text x="7.15" y="79.5" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B10</text>
@@ -162,4 +173,35 @@
   <text x="31.483" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT L</text>
   <text x="43.65" y="106.9" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OUT R</text>
 
+  <!-- NPTH drill layer overlay: solid black holes -->
+  <g id="npth_drills" fill="#000000" stroke="none">
+    <circle cx="25.400" cy="19.252" r="1.600" />
+    <circle cx="8.650" cy="59.288" r="2.750" />
+    <circle cx="7.150" cy="84.562" r="3.100" />
+    <circle cx="7.150" cy="98.312" r="3.100" />
+    <circle cx="7.150" cy="111.900" r="3.100" />
+    <circle cx="19.317" cy="84.562" r="3.100" />
+    <circle cx="19.317" cy="98.312" r="3.100" />
+    <circle cx="19.317" cy="111.900" r="3.100" />
+    <circle cx="25.503" cy="61.957" r="3.100" />
+    <circle cx="31.483" cy="84.562" r="3.100" />
+    <circle cx="31.483" cy="98.312" r="3.100" />
+    <circle cx="31.483" cy="111.900" r="3.100" />
+    <circle cx="42.155" cy="59.288" r="3.100" />
+    <circle cx="43.650" cy="84.562" r="3.100" />
+    <circle cx="43.650" cy="98.312" r="3.100" />
+    <circle cx="43.650" cy="111.900" r="3.100" />
+    <circle cx="11.176" cy="22.904" r="3.600" />
+    <circle cx="11.176" cy="42.027" r="3.600" />
+    <circle cx="39.650" cy="22.904" r="3.600" />
+    <circle cx="39.650" cy="42.027" r="3.600" />
+    <circle cx="6.500" cy="3.000" r="1.500" />
+    <circle cx="8.500" cy="3.000" r="1.500" />
+    <circle cx="42.100" cy="125.500" r="1.500" />
+    <circle cx="44.100" cy="125.500" r="1.500" />
+  </g>
+  <!-- SD card holder cutout overlay: solid black slot from Edge_Cuts -->
+  <g id="sd_slot" fill="#000000" stroke="none">
+    <rect x="24.140" y="33.493" width="3.208" height="12.802" />
+  </g>
 </svg>

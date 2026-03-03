@@ -129,6 +129,11 @@ struct SimpleResynth
     // spectra lock to the requested fundamental; when false, the original spectrum is
     // preserved and the fundamental is reinforced by a partial-based model.
     bool  pitch_lock_mode_;
+    // When true, bypass all pitch/harmonic tricks and perform a basic
+    // phase-vocoder style resynthesis of the input spectrum: no
+    // pitch-shift, no harmonic overlay, just shaped magnitudes and
+    // propagated phases.
+    bool  pure_resynth_mode_;
 
     void Init()
     {
@@ -152,6 +157,7 @@ struct SimpleResynth
         fundamental_hz_ = 0.0f;
         sample_rate_ = 0.0f;
         pitch_lock_mode_ = true;
+        pure_resynth_mode_ = false;
     }
 
     void SetSmoothing(float alpha)       { mag_smooth_coeff = Clamp(alpha, 0.0f, 1.0f); }
@@ -162,6 +168,7 @@ struct SimpleResynth
     void SetPhaseDiffusion(float amount) { phase_diffusion = Clamp(amount, 0.0f, 1.0f); }
     void SetFluff(float amount)          { fluff = Clamp(amount, 0.0f, 1.0f); }
     void SetPitchLockMode(bool enable)   { pitch_lock_mode_ = enable; }
+    void SetPureResynthMode(bool enable) { pure_resynth_mode_ = enable; }
 
     // 1 V/oct: 0 V = C0 (~16.35 Hz), 1 V = C1 (~32.7 Hz), 2 V = C2 (~65.4 Hz), etc.
     // Sets pitch_ratio so the resynthesized fundamental is at f0_hz, and enables
@@ -335,91 +342,108 @@ struct SimpleResynth
             last_frame_spectral_energy = (n > 0.0f) ? (rms / n) : 0.0f;
         }
 
-        // FLUFF stage 3: introduce gentle micro‑pitch jitter per grain in pitch‑locked
-        // mode only. This preserves overall tuning while creating a denser, more
-        // animated cloud around the target fundamental.
-        float pitch_ratio_used = pitch_lock_mode_ ? pitch_ratio : 1.0f;
-        if(pitch_lock_mode_ && active_fluff_stages >= 3)
+        if(pure_resynth_mode_)
         {
-            float max_cents = 12.0f
-                              * (static_cast<float>(active_fluff_stages - 2)
-                                 / static_cast<float>(kNumFluffStages - 2));
-            float cents = RandUniform(-max_cents, max_cents);
-            float factor = powf(2.0f, cents / 1200.0f);
-            pitch_ratio_used *= factor;
+            // Basic phase-vocoder style resynthesis: do not pitch-shift
+            // or add harmonic scaffolding; simply reconstruct the
+            // spectrum from the shaped magnitudes and propagated
+            // phases.
+            for(size_t k = 0; k <= kNumBins; ++k)
+            {
+                float mag   = mag_smooth[k];
+                float phase = synth_phase[k] * kTwoPi;
+                spectrum[k].re = mag * cosf(phase);
+                spectrum[k].im = mag * sinf(phase);
+            }
         }
-
-        for (size_t k_out = 0; k_out <= kNumBins; ++k_out)
+        else
         {
-            float k_src_f = static_cast<float>(k_out) / pitch_ratio_used;
-            size_t lo = static_cast<size_t>(k_src_f);
-            size_t hi = lo + 1;
-            float frac = k_src_f - static_cast<float>(lo);
-
-            float mag_out, phase_out;
-            if (hi > kNumBins) { mag_out = 0.0f; phase_out = 0.0f; }
-            else if (lo == 0 && hi == 1)
+            // FLUFF stage 3: introduce gentle micro‑pitch jitter per grain in pitch‑locked
+            // mode only. This preserves overall tuning while creating a denser, more
+            // animated cloud around the target fundamental.
+            float pitch_ratio_used = pitch_lock_mode_ ? pitch_ratio : 1.0f;
+            if(pitch_lock_mode_ && active_fluff_stages >= 3)
             {
-                mag_out   = (1.0f - frac) * mag_smooth[0] + frac * mag_smooth[1];
-                phase_out = (1.0f - frac) * synth_phase[0] + frac * synth_phase[1];
-            }
-            else
-            {
-                mag_out   = (1.0f - frac) * mag_smooth[lo] + frac * mag_smooth[hi];
-                phase_out = (1.0f - frac) * synth_phase[lo] + frac * synth_phase[hi];
+                float max_cents = 12.0f
+                                  * (static_cast<float>(active_fluff_stages - 2)
+                                     / static_cast<float>(kNumFluffStages - 2));
+                float cents = RandUniform(-max_cents, max_cents);
+                float factor = powf(2.0f, cents / 1200.0f);
+                pitch_ratio_used *= factor;
             }
 
-            // FLUFF stage 4: subtle per‑bin magnitude jitter to create a noisier, more
-            // granular cloud at high settings. Energy preservation above keeps level
-            // stable even when this stage is active.
-            if(active_fluff_stages >= 4 && mag_out > 0.0f)
+            for (size_t k_out = 0; k_out <= kNumBins; ++k_out)
             {
-                float depth = 0.25f;
-                float jitter = RandUniform(-depth, depth);
-                float scale = 1.0f + jitter;
-                if(scale < 0.2f) scale = 0.2f;
-                if(scale > 1.8f) scale = 1.8f;
-                mag_out *= scale;
+                float k_src_f = static_cast<float>(k_out) / pitch_ratio_used;
+                size_t lo = static_cast<size_t>(k_src_f);
+                size_t hi = lo + 1;
+                float frac = k_src_f - static_cast<float>(lo);
+
+                float mag_out, phase_out;
+                if (hi > kNumBins) { mag_out = 0.0f; phase_out = 0.0f; }
+                else if (lo == 0 && hi == 1)
+                {
+                    mag_out   = (1.0f - frac) * mag_smooth[0] + frac * mag_smooth[1];
+                    phase_out = (1.0f - frac) * synth_phase[0] + frac * synth_phase[1];
+                }
+                else
+                {
+                    mag_out   = (1.0f - frac) * mag_smooth[lo] + frac * mag_smooth[hi];
+                    phase_out = (1.0f - frac) * synth_phase[lo] + frac * synth_phase[hi];
+                }
+
+                // FLUFF stage 4: subtle per‑bin magnitude jitter to create a noisier, more
+                // granular cloud at high settings. Energy preservation above keeps level
+                // stable even when this stage is active.
+                if(active_fluff_stages >= 4 && mag_out > 0.0f)
+                {
+                    float depth = 0.25f;
+                    float jitter = RandUniform(-depth, depth);
+                    float scale = 1.0f + jitter;
+                    if(scale < 0.2f) scale = 0.2f;
+                    if(scale > 1.8f) scale = 1.8f;
+                    mag_out *= scale;
+                }
+
+                float out_phase = phase_out * kTwoPi;
+                spectrum[k_out].re = mag_out * cosf(out_phase);
+                spectrum[k_out].im = mag_out * sinf(out_phase);
             }
 
-            float out_phase = phase_out * kTwoPi;
-            spectrum[k_out].re = mag_out * cosf(out_phase);
-            spectrum[k_out].im = mag_out * sinf(out_phase);
-        }
-
-        // V/OCT modes:
-        // - Pitch‑locked grains (pitch_lock_mode_ = true): the entire spectrum is
-        //   pitch‑shifted so grain content locks to the requested fundamental. The
-        //   original timbre is preserved but follows the keyboard closely.
-        // - Partial‑based / spectral model (pitch_lock_mode_ = false): the original
-        //   spectrum stays at its analyzed pitch; we overlay a harmonic scaffold
-        //   (fundamental + harmonics) tuned to the requested fundamental so simple
-        //   inputs (e.g. a bell) behave like a full synth voice.
-        //
-        // In partial‑based mode only, reinforce fundamental and harmonics. Color
-        // (bright_dark) selects which family is emphasized: fully CCW (-1) = even
-        // harmonics only (2nd, 4th, 6th); fully CW (+1) = odd harmonics only
-        // (fundamental, 3rd, 5th).
-        if (!pitch_lock_mode_ && fundamental_hz_ > 0.0f && sample_rate_ > 0.0f)
-        {
-            float bins_per_hz = static_cast<float>(kFftSize) / sample_rate_;
-            int k0 = static_cast<int>(fundamental_hz_ * bins_per_hz + 0.5f);
-            if (k0 < 1) k0 = 1;
-            if (k0 > static_cast<int>(kNumBins)) k0 = static_cast<int>(kNumBins);
-            // Crossfade: CCW = even only, CW = odd only (1-based: 1=fundamental, 2=2nd, ...)
-            float odd_amount  = 0.5f * (bright_dark + 1.0f);   // 0 at CCW, 1 at CW
-            float even_amount = 1.0f - odd_amount;             // 1 at CCW, 0 at CW
-            // Gains taper so partials sit with the resynthesis (harmonically rich but blended)
-            const float gains[] = { 0.55f, 0.4f, 0.3f, 0.22f, 0.18f, 0.14f };  // h=1..6
-            const int num_harmonics = 6;
-            for (int h = 1; h <= num_harmonics; ++h)
+            // V/OCT modes:
+            // - Pitch‑locked grains (pitch_lock_mode_ = true): the entire spectrum is
+            //   pitch‑shifted so grain content locks to the requested fundamental. The
+            //   original timbre is preserved but follows the keyboard closely.
+            // - Partial‑based / spectral model (pitch_lock_mode_ = false): the original
+            //   spectrum stays at its analyzed pitch; we overlay a harmonic scaffold
+            //   (fundamental + harmonics) tuned to the requested fundamental so simple
+            //   inputs (e.g. a bell) behave like a full synth voice.
+            //
+            // In partial‑based mode only, reinforce fundamental and harmonics. Color
+            // (bright_dark) selects which family is emphasized: fully CCW (-1) = even
+            // harmonics only (2nd, 4th, 6th); fully CW (+1) = odd harmonics only
+            // (fundamental, 3rd, 5th).
+            if (!pitch_lock_mode_ && fundamental_hz_ > 0.0f && sample_rate_ > 0.0f)
             {
-                int k = k0 * h;
-                if (k > static_cast<int>(kNumBins)) break;
-                float amount = (h & 1) ? odd_amount : even_amount;  // odd h -> odd_amount, even h -> even_amount
-                float g = 1.0f + gains[h - 1] * amount;
-                spectrum[k].re *= g;
-                spectrum[k].im *= g;
+                float bins_per_hz = static_cast<float>(kFftSize) / sample_rate_;
+                int k0 = static_cast<int>(fundamental_hz_ * bins_per_hz + 0.5f);
+                if (k0 < 1) k0 = 1;
+                if (k0 > static_cast<int>(kNumBins)) k0 = static_cast<int>(kNumBins);
+                // Crossfade: CCW = even only, CW = odd only (1-based: 1=fundamental, 2=2nd, ...)
+                float odd_amount  = 0.5f * (bright_dark + 1.0f);   // 0 at CCW, 1 at CW
+                float even_amount = 1.0f - odd_amount;             // 1 at CCW, 0 at CW
+                // Gains taper so partials sit with the resynthesis (harmonically rich but blended)
+                const float gains[] = { 0.55f, 0.4f, 0.3f, 0.22f, 0.18f, 0.14f };  // h=1..6
+                const int num_harmonics = 6;
+                for (int h = 1; h <= num_harmonics; ++h)
+                {
+                    int k = k0 * h;
+                    if (k > static_cast<int>(kNumBins)) break;
+                    float amount = (h & 1) ? odd_amount : even_amount;  // odd h -> odd_amount, even h -> even_amount
+                    float g = 1.0f + gains[h - 1] * amount;
+                    spectrum[k].re *= g;
+                    spectrum[k].im *= g;
+                }
             }
         }
 
@@ -452,8 +476,18 @@ struct SimpleResynth
         {
             float gain = rms_window / rms_grain;
             if (gain > 0.25f && gain < 4.0f)  // avoid extreme gains
-                for (size_t n = 0; n < kFftSize; ++n) grain.buffer[n] *= gain;
+            {
+                for (size_t n = 0; n < kFftSize; ++n)
+                    grain.buffer[n] *= gain;
+            }
         }
+
+        // Global attenuation: scale each grain way down so its samples fall between
+        // 0.1% and 10% of their previous values. This keeps the algorithm identical
+        // while substantially reducing raw grain level before overlap-add / compression.
+        float global_scale = RandUniform(0.001f, 0.10f);
+        for (size_t n = 0; n < kFftSize; ++n)
+            grain.buffer[n] *= global_scale;
 
         grain.Start();
     }

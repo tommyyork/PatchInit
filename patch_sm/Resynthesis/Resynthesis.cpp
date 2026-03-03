@@ -55,7 +55,7 @@ DaisyPatchSM patch;
 // B_8: Mode select — when pressed, grains are pitch‑locked to V/OCT; when released,
 // the engine runs in partial‑based / spectral‑model mode.
 Switch     mode_switch;
-// B_7: reserved (reverb temporarily disabled)
+// B_7: MAX COMP — toggles a stronger Omnipressor-style compressor on the output.
 Switch     plateau_switch;
 
 static SimpleResynth resynth;
@@ -67,13 +67,26 @@ static float  input_history[kFftSize];
 static size_t history_write_pos  = 0;
 static size_t total_samples_seen = 0;
 static float  grain_phase        = 0.0f;
-static float  time_scale         = 1.0f;
+static float  time_scale         = 0.1f;
 // One-pole smoothed spectral energy for CV_OUT_1 (0–1)
-static float  cv_energy_smooth   = 0.0f;
-static const float cv_energy_coeff = 0.002f;  // smoothing (~0.1s at 48kHz block rate)
+static float  cv_energy_smooth   = 0.1f;
+static const float cv_energy_coeff = 0.01f;  // smoothing (~0.1s at 48kHz block rate)
+// Simple time-domain feedback around the resynth output, driven by CV_2 (SMOOTH).
+// 0 = no feedback, 1 = full internal feedback (clamped below runaway).
+static float  feedback_state     = 0.0f;
 
 // Compressor: normal (2:1, make output consistent as a sound source)
 static patch_sm::Compressor comp_normal;
+
+// Compressor parameter sets: "normal" vs "MAX COMP" (Omnipressor-style).
+static constexpr float kCompThreshNormal = 0.25f;
+static constexpr float kCompRatioNormal  = 2.0f;
+static constexpr float kCompMakeupNormal = 1.8f;
+static constexpr float kCompThreshMax    = 0.2f;
+static constexpr float kCompRatioMax     = -2.0f;
+static constexpr float kCompMakeupMax    = 2.6f;
+static constexpr float kCompAttack       = 0.0003f;
+static constexpr float kCompRelease      = 0.05f;
 
 #ifdef RES_DEBUG
 // Debug-logging cadence in audio samples (set from runtime sample rate)
@@ -104,7 +117,7 @@ static void PrintStartupStatus()
                     FLT_VAR3(patch.GetAdcValue(CV_8)));
 
     RES_DEBUG_PRINTLN("Buttons / switches at startup:");
-    RES_DEBUG_PRINTLN("B7 Plateau (disabled): %s", plateau_switch.Pressed() ? "ON" : "OFF");
+    RES_DEBUG_PRINTLN("B7 MAX COMP: %s", plateau_switch.Pressed() ? "ON" : "OFF");
     RES_DEBUG_PRINTLN("B8 Pitch lock: %s", mode_switch.Pressed() ? "ON" : "OFF");
 }
 #endif
@@ -133,10 +146,10 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     mode_switch.Debounce();
     plateau_switch.Debounce();
 
-    bool pitch_lock_on = mode_switch.Pressed();   // B_8: pitch‑locked grains when ON
-    (void)plateau_switch; // reverb temporarily disabled
+    bool pitch_lock_on = mode_switch.Pressed();    // B_8: pitch‑locked grains when ON
+    bool max_comp_on   = plateau_switch.Pressed(); // B_7: MAX COMP + reverb when ON
 
-    // Read all 8 CVs; when B_8 ("MAX COMP") is 1, swap bank CV_1..4 with CV_5..8
+    // Read all 8 CVs (CV_1..CV_8).
     float v1 = patch.GetAdcValue(CV_1);
     float v2 = patch.GetAdcValue(CV_2);
     float v3 = patch.GetAdcValue(CV_3);
@@ -167,7 +180,8 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     float diffusion_bi = CvToBipolar(diffusion_cv);
 
     float drywet = fmap(drywet_knob, 0.0f, 1.0f);
-    resynth.SetSmoothing(fmap(smooth_knob, 0.0f, 1.0f));
+    float smoothing = fmap(smooth_knob, 0.0f, 1.0f);
+    resynth.SetSmoothing(smoothing);
     resynth.SetFluff(fmap(fluff_knob, 0.0f, 1.0f));
     resynth.SetBrightDark(fmap(tilt_knob, -1.0f, 1.0f));
 
@@ -180,6 +194,13 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     // preservation so the sound stays present even at extreme settings.
     resynth.SetSparsity(0.5f * (sparsity_bi + 1.0f));       // -1..1 -> 0..1
     resynth.SetPhaseDiffusion(0.5f * (diffusion_bi + 1.0f)); // -1..1 -> 0..1
+
+    // Map SMOOTH (CV_2) to feedback amount: fully CCW = 0, fully CW = full feedback.
+    // Clamp the effective loop gain below 1.0 so the feedback does not run away.
+    // A gentle curve keeps most of the knob travel in the musically useful range.
+    float feedback_amount = smoothing;              // 0..1
+    float max_feedback = 0.85f;                     // safety margin against runaway
+    float feedback = max_feedback * feedback_amount * feedback_amount; // emphasize lower range
 
 #ifdef RES_DEBUG
     // Periodic debug dump of control and spectral state
@@ -266,9 +287,14 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         if(active_count > 0)
             wet *= 1.0f / (static_cast<float>(kHopDenom) * static_cast<float>(active_count));
 
+        // Simple feedback loop on the wet resynth signal, driven by CV_2 (SMOOTH).
+        // Feedback is applied only once per sample and clamped below runaway.
+        float wet_fb = wet + feedback * feedback_state;
+        feedback_state = wet_fb;
+
         // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
         float out_mono = (active_count > 0)
-            ? ((1.0f - drywet) * mono + drywet * wet)
+            ? ((1.0f - drywet) * mono + drywet * wet_fb)
             : mono;
 
         // Soft clip to reduce harsh peaks and further smooth level variation
@@ -276,17 +302,52 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         if (out_mono > lim)  out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
         if (out_mono < -lim) out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
 
-        // Compressor (fixed "normal" mode) after soft clip to give a stable level
+        // Compressor after soft clip to give a stable level. When B_7 (MAX COMP)
+        // is on, use a stronger Omnipressor-style setting; otherwise use the
+        // gentler "normal" 2:1 compression.
+        if(max_comp_on)
+        {
+            comp_normal.SetParams(
+                kCompThreshMax,
+                kCompRatioMax,
+                kCompMakeupMax,
+                kCompAttack,
+                kCompRelease);
+        }
+        else
+        {
+            comp_normal.SetParams(
+                kCompThreshNormal,
+                kCompRatioNormal,
+                kCompMakeupNormal,
+                kCompAttack,
+                kCompRelease);
+        }
         out_mono = comp_normal.Process(out_mono);
 
-        // Final soft clip after compressor
+        // Final soft clip after compressor.
         if (out_mono > lim)  out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
         if (out_mono < -lim) out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
 
-        // Plateau reverb: when B_7 is on, 50/50 dry/wet; when off, completely dry.
-        // Reverb temporarily disabled: direct mono → stereo
-        OUT_L[i] = out_mono;
-        OUT_R[i] = out_mono;
+        // Plateau reverb behaviour:
+        // - Only active in pitch‑locked mode (B_8 ON), so the reverb
+        //   reinforces the pitched resynth voice.
+        // - B_7 (MAX COMP) toggles both the stronger compressor above
+        //   and the reverb itself. When MAX COMP is off, output stays
+        //   dry regardless of B_8.
+        float outL = out_mono;
+        float outR = out_mono;
+        if(pitch_lock_on && max_comp_on)
+        {
+            float verbL, verbR;
+            plateau.Process(out_mono, out_mono, verbL, verbR);
+            // 50/50 dry/wet blend.
+            outL = 0.5f * (out_mono + verbL);
+            outR = 0.5f * (out_mono + verbR);
+        }
+
+        OUT_L[i] = outL;
+        OUT_R[i] = outR;
     }
 
     // CV_OUT_1: smoothed spectral energy (RMS per frame), 0–5 V
@@ -306,9 +367,15 @@ int main(void)
     resynth.Init();
     plateau.Init(patch.AudioSampleRate());
 
-    // Single "normal" compressor: 2:1, make output consistent as sound source
+    // Single compressor: defaults to "normal" 2:1; B_7 (MAX COMP) engages a
+    // stronger Omnipressor-style setting.
     comp_normal.Init(patch.AudioSampleRate());
-    comp_normal.SetParams(0.25f, 2.0f, 1.8f, 0.0003f, 0.05f);
+    comp_normal.SetParams(
+        kCompThreshNormal,
+        kCompRatioNormal,
+        kCompMakeupNormal,
+        kCompAttack,
+        kCompRelease);
 #ifdef RES_DEBUG
     g_sample_rate            = patch.AudioSampleRate();
     g_debug_interval_samples = static_cast<uint32_t>(g_sample_rate);
