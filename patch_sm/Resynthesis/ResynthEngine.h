@@ -81,12 +81,12 @@ inline void FftInPlace(Complex *data, size_t n, bool inverse)
 // Constants and phase-vocoder structures
 // ----------------------------------------------------------------------
 
-static constexpr size_t kFftBits   = 8;
+static constexpr size_t kFftBits   = 7;
 static constexpr size_t kFftSize   = 1 << kFftBits;
 static constexpr size_t kHopDenom  = 4;
 static constexpr size_t kHopSize   = kFftSize / kHopDenom;
 static constexpr size_t kNumBins   = kFftSize / 2;
-static constexpr size_t kNumGrains = 16;
+static constexpr size_t kNumGrains = 24;
 static constexpr float  kTwoPi     = 2.0f * static_cast<float>(M_PI);
 
 struct Grain
@@ -126,6 +126,16 @@ struct SimpleResynth
     float phase_diffusion;
     float fluff;
     float last_frame_spectral_energy;
+    // Rough measure of "harmonic peakiness" of the last analysis frame:
+    // 0 ~ flat/noisy spectrum, 1 ~ strong peaks/harmonics.
+    float last_frame_spectral_peakiness;
+    // Per-note spectral template (intentional "harmonic envelope") that
+    // is captured and slowly updated per V/OCT note so that the resynth
+    // behaves more like a stable synth voice than a frame-by-frame
+    // granular replay.
+    float note_template[kNumBins + 1];
+    bool  note_template_valid_;
+    float last_note_fundamental_hz_;
     // V/oct mode: fundamental frequency (Hz) and sample rate for harmonic reinforcement
     float fundamental_hz_;
     float sample_rate_;
@@ -149,6 +159,7 @@ struct SimpleResynth
             synth_phase[i] = 0.0f;
             mag_smooth[i]  = 0.0f;
             mag_input[i]   = 0.0f;
+            note_template[i] = 0.0f;
         }
         primed = false;
         mag_smooth_coeff = 0.4f;
@@ -159,10 +170,13 @@ struct SimpleResynth
         phase_diffusion = 0.0f;
         fluff = 0.0f;
         last_frame_spectral_energy = 0.0f;
+        last_frame_spectral_peakiness = 0.0f;
         fundamental_hz_ = 0.0f;
         sample_rate_ = 0.0f;
         pitch_lock_mode_ = true;
         pure_resynth_mode_ = false;
+        note_template_valid_ = false;
+        last_note_fundamental_hz_ = 0.0f;
     }
 
     void SetSmoothing(float alpha)       { mag_smooth_coeff = Clamp(alpha, 0.0f, 1.0f); }
@@ -174,6 +188,7 @@ struct SimpleResynth
     void SetFluff(float amount)          { fluff = Clamp(amount, 0.0f, 1.0f); }
     void SetPitchLockMode(bool enable)   { pitch_lock_mode_ = enable; }
     void SetPureResynthMode(bool enable) { pure_resynth_mode_ = enable; }
+    float GetFluff() const               { return fluff; }
 
     // 1 V/oct: 0 V = C0 (~16.35 Hz), 1 V = C1 (~32.7 Hz), 2 V = C2 (~65.4 Hz), etc.
     // Sets pitch_ratio so the resynthesized fundamental is at f0_hz, and enables
@@ -184,6 +199,34 @@ struct SimpleResynth
         fundamental_hz_ = f0_hz > 0.0f ? f0_hz : 32.7f;
         float ref_hz = sample_rate_ / static_cast<float>(kFftSize);
         pitch_ratio = Clamp(fundamental_hz_ / ref_hz, 0.1f, 8.0f);
+        // Track per-note changes so we can reset and rebuild the
+        // spectral template when V/OCT moves by at least a semitone.
+        if(fundamental_hz_ > 0.0f)
+        {
+            if(last_note_fundamental_hz_ <= 0.0f)
+            {
+                last_note_fundamental_hz_ = fundamental_hz_;
+                note_template_valid_      = false;
+            }
+            else
+            {
+                float ratio = fundamental_hz_ / last_note_fundamental_hz_;
+                if(ratio > 0.0001f && ratio != 1.0f)
+                {
+                    float semitones = 12.0f * log2f(ratio);
+                    if(fabsf(semitones) >= 0.5f)
+                    {
+                        last_note_fundamental_hz_ = fundamental_hz_;
+                        note_template_valid_      = false;
+                    }
+                }
+            }
+        }
+        else
+        {
+            last_note_fundamental_hz_ = 0.0f;
+            note_template_valid_      = false;
+        }
     }
 
     static float PrincArg(float x)
@@ -218,6 +261,10 @@ struct SimpleResynth
             active_fluff_stages = 0;
         if(active_fluff_stages > kNumFluffStages)
             active_fluff_stages = kNumFluffStages;
+        // In pitch‑locked mode, keep FLUFF more restrained so the perceived
+        // pitch remains tight even when FLUFF is turned up.
+        if(pitch_lock_mode_ && active_fluff_stages > 2)
+            active_fluff_stages = 2;
         if(active_fluff_stages >= 2)
         {
             // Up to ±1/8 of the window for high FLUFF.
@@ -277,7 +324,14 @@ struct SimpleResynth
             delta = PrincArg(delta);
             float omega_instant = omega_bin + delta / static_cast<float>(kHopSize);
 
-            mag_smooth[k] = mag_smooth[k] + (mag_smooth_coeff > 0.02f ? mag_smooth_coeff : 0.02f) * (mag - mag_smooth[k]);
+            float smooth_alpha = (mag_smooth_coeff > 0.02f ? mag_smooth_coeff : 0.02f);
+            if(pitch_lock_mode_)
+            {
+                // In pitch‑locked mode, use slightly faster magnitude tracking so
+                // note changes follow V/OCT more tightly in time.
+                smooth_alpha *= 0.5f;
+            }
+            mag_smooth[k] = mag_smooth[k] + smooth_alpha * (mag - mag_smooth[k]);
             synth_phase[k] = synth_phase[k] + omega_instant * static_cast<float>(kHopSize);
             prev_phase[k] = phase;
         }
@@ -290,6 +344,23 @@ struct SimpleResynth
             if (mag_smooth[k] > max_mag) max_mag = mag_smooth[k];
         }
         float mean_mag = sum_mag / static_cast<float>(kNumBins > 1 ? kNumBins - 1 : 1);
+
+        // Peakiness: how "spiky" the spectrum is relative to its mean. Used as a
+        // crude proxy for harmonic richness vs noise. Values near 0 correspond to
+        // flat/noisy spectra; values near 1 correspond to strong, isolated peaks.
+        {
+            float peakiness = 0.0f;
+            if (mean_mag > 1e-6f && max_mag > 0.0f)
+            {
+                float ratio = max_mag / mean_mag; // 1 = flat, >1 = peaky
+                // Map ratio in [1,5] approximately to [0,1], clamp outside.
+                float norm = (ratio - 1.0f) / 4.0f;
+                if (norm < 0.0f) norm = 0.0f;
+                if (norm > 1.0f) norm = 1.0f;
+                peakiness = norm;
+            }
+            last_frame_spectral_peakiness = peakiness;
+        }
 
         // Preserve total spectral energy across shaping so level doesn't jump when changing flatten/tilt/sparsity
         float pre_sum_sq = 0.0f;
@@ -305,12 +376,19 @@ struct SimpleResynth
             mag_smooth[k] *= tilt_gain;
         }
 
-        if (sparsity > 0.0f && max_mag > 0.0f)
+        float sparsity_used = sparsity;
+        if(pitch_lock_mode_)
+        {
+            // In pitch‑locked mode, keep sparsity gentler so spectra remain rich
+            // and on-pitch instead of breaking into too-sparse, noisy clusters.
+            sparsity_used *= 0.5f;
+        }
+        if (sparsity_used > 0.0f && max_mag > 0.0f)
         {
             // Soft-knee sparsity: gradually attenuate bins around the threshold
             // instead of hard-gating them to zero, to avoid frame-to-frame
             // jumps in spectral energy.
-            float thresh = max_mag * (0.9f * sparsity);
+            float thresh = max_mag * (0.9f * sparsity_used);
             float knee   = 0.2f * thresh;  // small band around thresh
             for (size_t k = 0; k <= kNumBins; ++k)
             {
@@ -341,6 +419,12 @@ struct SimpleResynth
         // FLUFF stage 1: add extra, frequency-dependent phase diffusion on top of the
         // dedicated PHASE DIFFUSION control, starting subtly and increasing with FLUFF.
         float effective_phase_diffusion = phase_diffusion;
+        if(pitch_lock_mode_)
+        {
+            // Keep additional phase diffusion more subtle in pitch‑locked mode
+            // so that note identity stays clear even with animated spectra.
+            effective_phase_diffusion *= 0.5f;
+        }
         if(active_fluff_stages >= 1)
         {
             float extra = 0.2f
@@ -366,6 +450,45 @@ struct SimpleResynth
             float rms = sqrtf(sum_sq);
             float n = static_cast<float>(kNumBins + 1);
             last_frame_spectral_energy = (n > 0.0f) ? (rms / n) : 0.0f;
+        }
+
+        // Per-note spectral template: when V/OCT is active, capture and
+        // slowly update a smoothed magnitude profile for the current
+        // note so grains share a stable, synth-like "harmonic envelope"
+        // instead of following every frame's fine detail.
+        if(fundamental_hz_ > 0.0f && sample_rate_ > 0.0f)
+        {
+            if(!note_template_valid_)
+            {
+                for(size_t k = 0; k <= kNumBins; ++k)
+                    note_template[k] = mag_smooth[k];
+                note_template_valid_ = true;
+            }
+            else
+            {
+                // Evolve the template very slowly so it reflects the
+                // input's long-term colour without reacting to each
+                // transient; then bias the current frame toward that
+                // template for a more coherent note timbre.
+                const float template_alpha = 0.05f;
+                for(size_t k = 0; k <= kNumBins; ++k)
+                {
+                    note_template[k] = note_template[k]
+                                       + template_alpha
+                                             * (mag_smooth[k]
+                                                - note_template[k]);
+                }
+            }
+
+            // Mix ratio: in pitch-locked mode lean harder on the
+            // template (more synth-like); in partial-based mode keep
+            // more of the raw analysis (more "reimagined" texture).
+            float mix = pitch_lock_mode_ ? 0.75f : 0.5f;
+            for(size_t k = 0; k <= kNumBins; ++k)
+            {
+                mag_smooth[k] = (1.0f - mix) * mag_smooth[k]
+                                + mix * note_template[k];
+            }
         }
 
         if(pure_resynth_mode_)
@@ -439,14 +562,16 @@ struct SimpleResynth
             // V/OCT modes:
             // - Pitch‑locked grains (pitch_lock_mode_ = true): the entire spectrum is
             //   pitch‑shifted so grain content locks to the requested fundamental. The
-            //   original timbre is preserved but follows the keyboard closely.
+            //   original timbre is preserved but follows the keyboard closely, and a
+            //   gentler harmonic scaffold reinforces the same harmonic families as in
+            //   the partial‑based mode.
             // - Partial‑based / spectral model (pitch_lock_mode_ = false): the original
-            //   spectrum stays at its analyzed pitch; we overlay a harmonic scaffold
-            //   (fundamental + harmonics) tuned to the requested fundamental so simple
-            //   inputs (e.g. a bell) behave like a full synth voice.
+            //   spectrum stays at its analyzed pitch; we overlay a more forward harmonic
+            //   scaffold (fundamental + harmonics) tuned to the requested fundamental so
+            //   simple inputs (e.g. a bell) behave like a full synth voice.
             //
-            // In partial‑based mode only, reinforce fundamental and harmonics; then
-            // top up their levels with additional sine energy so that:
+            // In both modes, reinforce fundamental and harmonics; then top up their
+            // levels with additional sine energy so that:
             // - the fundamental in the output is at least as loud as in the input;
             // - each selected harmonic has at least half the level of the previous one.
             if (fundamental_hz_ > 0.0f && sample_rate_ > 0.0f)
@@ -463,39 +588,40 @@ struct SimpleResynth
                 // Gains taper so partials sit with the resynthesis (harmonically rich but blended).
                 // Slightly stronger than before so that the harmonic scaffold can more
                 // confidently drive the output towards a full-scale Eurorack level.
-                const float gains[]      = { 0.75f, 0.55f, 0.4f, 0.30f, 0.24f, 0.20f };  // h=1..6
+                const float gains[]       = { 0.75f, 0.55f, 0.40f, 0.30f, 0.24f, 0.20f };  // h=1..6
                 const int   num_harmonics = 6;
 
-                // Existing harmonic reinforcement: only in partial‑based mode.
-                if (!pitch_lock_mode_)
+                // Mode‑dependent scaffold strength: in pitch‑locked mode we apply a
+                // stronger reinforcement so the perceived pitch snaps confidently
+                // to the requested fundamental; in partial‑based mode the scaffold
+                // can remain more blended with the original spectrum.
+                float mode_gain = pitch_lock_mode_ ? 0.9f : 1.0f;
+                for (int h = 1; h <= num_harmonics; ++h)
                 {
-                    for (int h = 1; h <= num_harmonics; ++h)
-                    {
-                        int k = k0 * h;
-                        if (k > static_cast<int>(kNumBins)) break;
-                        float amount = (h & 1) ? odd_amount : even_amount;  // odd h -> odd_amount, even h -> even_amount
-                        float g = 1.0f + gains[h - 1] * amount;
-                        spectrum[k].re *= g;
-                        spectrum[k].im *= g;
-                    }
+                    int k = k0 * h;
+                    if (k > static_cast<int>(kNumBins)) break;
+                    float amount = (h & 1) ? odd_amount : even_amount;  // odd h -> odd_amount, even h -> even_amount
+                    float g = 1.0f + mode_gain * gains[h - 1] * amount;
+                    spectrum[k].re *= g;
+                    spectrum[k].im *= g;
                 }
 
                 // Now ensure minimum levels by adding sine components if needed.
 
-                // Fundamental: ensure output magnitude >= input magnitude at k0, and
-                // nudge it towards a healthy target based on the frame's spectral
-                // energy so that quiet inputs still rise to a musically useful level.
-                float fund_in  = mag_input[k0];
+                // Fundamental: ensure there is a strong, clearly audible
+                // sine at the requested fundamental whenever V/OCT is
+                // active, regardless of the instantaneous grain energy.
                 float fund_out = sqrtf(spectrum[k0].re * spectrum[k0].re
                                       + spectrum[k0].im * spectrum[k0].im);
-                // Target fundamental: at least the input level, but also at least a
-                // fraction of the frame's RMS energy so very quiet inputs are lifted.
-                float target_fund = fund_in;
+                // Target fundamental: a mix of a fixed synth-like floor
+                // and a fraction of the frame's RMS energy so quiet
+                // inputs still produce a strong bass tone.
+                float target_fund = 0.02f; // baseline "osc" floor
                 if (last_frame_spectral_energy > 0.0f)
                 {
-                    float min_from_energy = 0.8f * last_frame_spectral_energy;
-                    if (target_fund < min_from_energy)
-                        target_fund = min_from_energy;
+                    float from_energy = 0.8f * last_frame_spectral_energy;
+                    if (target_fund < from_energy)
+                        target_fund = from_energy;
                 }
                 if (target_fund > 0.0f && fund_out < target_fund)
                 {
@@ -510,9 +636,11 @@ struct SimpleResynth
 
                 float prev_mag = fund_out;
 
-                // Even / odd harmonics: only for the active family, and only up to num_harmonics.
-                // Each harmonic must be at least half as loud as the previous one and not
-                // below its own input magnitude.
+                // Even / odd harmonics: only for the active family, and
+                // only up to num_harmonics. Each harmonic must be at
+                // least half as loud as the previous one, independent of
+                // the original grain magnitudes, so the harmonic stack
+                // itself remains strong and clearly audible.
                 for (int h = 2; h <= num_harmonics; ++h)
                 {
                     int k = k0 * h;
@@ -523,14 +651,11 @@ struct SimpleResynth
                     if (family_amount <= 0.0f)
                         continue; // this harmonic family is not active
 
-                    float in_mag  = mag_input[k];
                     float out_mag = sqrtf(spectrum[k].re * spectrum[k].re
                                          + spectrum[k].im * spectrum[k].im);
 
                     float min_from_prev = 0.5f * prev_mag;
-                    float target_mag    = in_mag;
-                    if (target_mag < min_from_prev)
-                        target_mag = min_from_prev;
+                    float target_mag    = min_from_prev;
 
                     if (target_mag > 0.0f && out_mag < target_mag)
                     {
@@ -544,6 +669,57 @@ struct SimpleResynth
                     }
 
                     prev_mag = out_mag;
+                }
+
+                // Gentle harmonic focusing: when V/OCT is active, softly
+                // de‑emphasise bins that sit far from integer multiples of
+                // the fundamental so that most of the spectral energy falls
+                // into the harmonic families selected by COLOR. This is kept
+                // conservative so noisy / inharmonic content still reads
+                // through the cloud.
+                const float base_focus = 0.35f;
+                if (k0 > 0 && base_focus > 0.0f)
+                {
+                    float focus = pitch_lock_mode_ ? (base_focus * 1.2f)
+                                                   : base_focus;
+                    if (focus > 0.8f)
+                        focus = 0.8f;
+
+                    for (size_t k = 1; k <= kNumBins; ++k)
+                    {
+                        float r = static_cast<float>(k) / static_cast<float>(k0);
+                        float h = floorf(r + 0.5f); // nearest integer harmonic index
+                        if (h < 1.0f || h > static_cast<float>(num_harmonics))
+                            continue;
+                        float dist = fabsf(r - h); // 0 at harmonic, 0.5 halfway
+                        float keep = 1.0f - focus * fminf(dist * 2.0f, 1.0f);
+                        spectrum[k].re *= keep;
+                        spectrum[k].im *= keep;
+                    }
+                }
+
+                // After adding a strong harmonic stack on top of the
+                // grain spectrum, rein in overall level if necessary so
+                // the combined result stays loud but does not explode in
+                // level. Compare energy before and after a hypothetical
+                // scaling and clamp the increase.
+                float energy_after = 0.0f;
+                for(size_t k = 0; k <= kNumBins; ++k)
+                    energy_after += spectrum[k].re * spectrum[k].re
+                                    + spectrum[k].im * spectrum[k].im;
+                if(energy_after > 0.0f && pre_sum_sq > 0.0f)
+                {
+                    float max_ratio = 4.0f; // allow up to +12 dB over shaping stage
+                    float ratio     = energy_after / pre_sum_sq;
+                    if(ratio > max_ratio)
+                    {
+                        float scale = sqrtf(max_ratio / ratio);
+                        for(size_t k = 0; k <= kNumBins; ++k)
+                        {
+                            spectrum[k].re *= scale;
+                            spectrum[k].im *= scale;
+                        }
+                    }
                 }
             }
         }

@@ -32,12 +32,29 @@ build_daisysp:
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
 include $(SYSTEM_FILES_DIR)/Makefile
 
+# DFU programming targets.
+# `_program-dfu` is the strict, low-level DFU target: it builds everything
+# (via the `all` prerequisite) and then invokes `dfu-util` directly. Any
+# error from `dfu-util` (including the common "Error during download get_status"
+# that can occur when the device reboots immediately after flashing) will cause
+# this target to fail.
+#
+# `program-dfu` is the relaxed convenience wrapper intended for day-to-day
+# development. It calls `_program-dfu` but ignores its exit status, so
+# successful flashes that trigger a spurious `get_status` error are treated
+# as success from the Make/VS Code point of view.
+_program-dfu: all
+	dfu-util -a 0 -s $(FLASH_ADDRESS):leave -D $(BUILD_DIR)/$(TARGET_BIN) -d ,0483:$(USBPID)
+
+program-dfu:
+	-$(MAKE) _program-dfu
+
 # Panel previews: generate PNGs from the SVG panel and Eurorack overlay.
 # Requires Inkscape. Set INKSCAPE=/path/to/inkscape if not in PATH (e.g. macOS: /Applications/Inkscape.app/Contents/MacOS/inkscape).
 INKSCAPE ?= inkscape
 PANEL_OUTPUT_DIR := panel/output
 
-.PHONY: panel svg tests test_resynth test_cv_sweeps test_fluff test_harmonic test_panel resynthesis-clean clean
+.PHONY: panel svg tests samples test_resynth_props test_panel resynthesis-clean clean
 
 # High-level panel target:
 # 1. Regenerate the canonical ResynthesisPanel.svg from the generator script.
@@ -67,10 +84,10 @@ $(PANEL_OUTPUT_DIR)/ResynthesisPanel_eurorack_overlay.png: $(PANEL_OUTPUT_DIR)/R
 	@echo "Generating Eurorack overlay PNG (1200 dpi, high-res) into $(PANEL_OUTPUT_DIR)..."
 	$(INKSCAPE) $< --export-type=png --export-dpi=1200 --export-filename=$@
 
-# Offline test (host build): run phase vocoder on a WAV with diatonic pitch steps.
-# CV sweep test: run 8 tests, one per CV parameter, with descriptive output filenames.
+# Offline tests:
+# - Property / stability tests (no WAVs) intended for automation.
+# - Sample renders (WAVs under test/out/) for subjective listening.
 # Panel test: run panel alignment / mechanical checks (Python).
-# Run all when you invoke make tests from the Resynthesis module root.
 PYTHON ?= python3
 DOC_DIR := doc
 
@@ -78,22 +95,19 @@ DOC_DIR := doc
 test_binaries:
 	$(MAKE) -C test all
 
-tests: test_resynth test_cv_sweeps test_fluff test_harmonic test_panel
+# Automated tests: property checks plus panel alignment.
+tests: test_resynth_props panel test_panel
 
-test_resynth:
-	$(MAKE) -C test run
-
-test_cv_sweeps:
-	$(MAKE) -C test cv_sweeps
-
-test_fluff:
-	$(MAKE) -C test fluff
-
-test_harmonic:
-	$(MAKE) -C test harmonic
+test_resynth_props:
+	$(MAKE) -C test tests
 
 test_panel:
 	$(PYTHON) panel/test_panel_alignment.py
+
+# Sample render suite: runs all offline sample-processing programs that
+# generate WAVs under test/out/ for subjective evaluation.
+samples:
+	$(MAKE) -C test samples
 
 # Documentation: US Letter–sized block diagram of the audio path and controls.
 # Invoke from the Resynthesis module root:

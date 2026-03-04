@@ -4,6 +4,7 @@
 // Build: make cv_sweeps (from test/) or make test_cv_sweeps (from Resynthesis/).
 
 #include "../ResynthEngine.h"
+#include "../ResynthParams.h"
 #include "wav_io.h"
 #include <cerrno>
 #include <cmath>
@@ -24,28 +25,16 @@
 #endif
 
 static constexpr unsigned kSampleRate = 48000;
-static constexpr float kBpm = 120.0f;
-static constexpr unsigned kQuarterNotes = 14;
-static constexpr float kDurationSec = (kQuarterNotes * 60.0f) / kBpm;
-static constexpr size_t kNumFrames = (size_t)(kSampleRate * kDurationSec + 0.5f);
 
-// V/OCT sweep test: 30 s, sine loop, 1 V to 4 V
-static constexpr float kVoctSweepDurationSec = 30.0f;
-static constexpr size_t kVoctSweepNumFrames = (size_t)(kSampleRate * kVoctSweepDurationSec + 0.5f);
-static constexpr float kSineLoopFreqHz = 220.0f;
-static constexpr size_t kSineLoopSamples = kSampleRate;  // 1 s loop
-
-// Separate output directory per test type
-static const char kOutCvSweep[]       = "out/cv_sweep";
-static const char kOutCvSweepMaxcomp[]= "out/cv_sweep_maxcomp";
+// Separate output directories per test type and mode
+static const char kOutCvSweepPitch[]            = "out/cv_sweep";
+static const char kOutCvSweepMaxcompPitch[]     = "out/cv_sweep_maxcomp";
+static const char kOutCvSweepPartial[]          = "out/cv_sweep_partial";
+static const char kOutCvSweepMaxcompPartial[]   = "out/cv_sweep_maxcomp_partial";
 
 // MAX COMP compressor (matches firmware when B_7 is on)
-static const float kCompThreshMax = 0.2f;
-static const float kCompRatioMax  = -2.0f;
-static const float kCompMakeupMax = 2.6f;
-static const float kCompAttack    = 0.0003f;
-static const float kCompRelease   = 0.05f;
-static const float kSoftClipLim   = 0.95f;
+using namespace resynth_params;
+
 static const float kMinAvgLevelDbFs = -60.0f;
 
 // Very simple mono reverb to approximate having Plateau (B_7) engaged during tests.
@@ -86,14 +75,14 @@ struct CvSweepTest {
 };
 
 static const CvSweepTest kCvTests[] = {
-    { "cv1_drywet",         "Dry/wet crossfade 0% -> 100% wet" },
-    { "cv2_smoothing",      "Magnitude smoothing 0.10 -> 0.95 (clear transients -> glassy pads)" },
-    { "cv3_flatten",        "Spectral flatten 0.10 -> 1 (original spectrum -> whitened / formant-rich)" },
-    { "cv4_tilt",           "Bright/dark tilt -1 -> 1 (even vs odd harmonic emphasis in partial-based mode)" },
-    { "cv5_voct",           "V/OCT sweep 1 V -> 4 V over 30 s (looped sine)" },
-    { "cv6_timestretch",    "Time stretch 0.5x -> 4x (avoids too-few-grains near-silence)" },
-    { "cv7_sparsity",       "Spectral sparsity 0 -> 0.9 (ring-mod / formant-like at high end)" },
-    { "cv8_phase_diffusion","Phase diffusion 0 -> 1 (clear to noisy/metallic)" },
+    { "cv1_offer_feed",     "OFFER send+mix: 0% dry (unshifted) -> 100% pitched granular/harmonic voice over full sample when V/OCT is active" },
+    { "cv2_smoothing",      "Magnitude smoothing 0.10 -> 0.95 over full sample (clear transients -> glassy pads)" },
+    { "cv3_flatten",        "Spectral flatten 0.10 -> 1 over full sample (original spectrum -> whitened / formant-rich)" },
+    { "cv4_tilt",           "Bright/dark tilt -1 -> 1 over full sample (even vs odd harmonic emphasis via the harmonic scaffold in both modes)" },
+    { "cv5_voct",           "V/OCT sweep 1 V -> 4 V over full sample (sample-driven, quantized over 3 octaves)" },
+    { "cv6_timestretch",    "Time stretch 0.5x -> 4x over full sample (avoids too-few-grains near-silence)" },
+    { "cv7_sparsity",       "Spectral sparsity 0 -> 0.9 over full sample (ring-mod / formant-like at high end)" },
+    { "cv8_phase_diffusion","Phase diffusion 0 -> 1 over full sample (clear to noisy/metallic)" },
 };
 static const size_t kNumCvTests = sizeof(kCvTests) / sizeof(kCvTests[0]);
 
@@ -161,7 +150,9 @@ static float compute_rms_dbfs(const float* buf, size_t n)
     return 20.0f * (float)std::log10(rms > 1e-10 ? rms : 1e-10);
 }
 
-static bool load_input(const char* path, std::vector<float>& mono, unsigned sampleRate)
+static bool load_input(const char* path,
+                       std::vector<float>& mono,
+                       unsigned sampleRate)
 {
     std::vector<float> inputSamples;
     WavInfo info;
@@ -170,13 +161,20 @@ static bool load_input(const char* path, std::vector<float>& mono, unsigned samp
     if (info.sampleRate != sampleRate)
         return false;
     size_t n = info.numFrames;
-    mono.resize(kNumFrames);
+    if (n == 0)
+        return false;
+    mono.resize(n);
     if (info.numChannels == 1) {
-        for (size_t i = 0; i < kNumFrames; ++i)
-            mono[i] = i < n ? inputSamples[i] : 0.0f;
+        for (size_t i = 0; i < n; ++i)
+            mono[i] = inputSamples[i];
     } else {
-        for (size_t i = 0; i < kNumFrames; ++i)
-            mono[i] = i < n ? 0.5f * (inputSamples[i * 2] + inputSamples[i * 2 + 1]) : 0.0f;
+        for (size_t i = 0; i < n; ++i)
+        {
+            size_t idx = i * 2;
+            float l = inputSamples[idx];
+            float r = (idx + 1 < inputSamples.size()) ? inputSamples[idx + 1] : l;
+            mono[i] = 0.5f * (l + r);
+        }
     }
     return true;
 }
@@ -187,15 +185,16 @@ static bool run_one_cv_test(
     size_t num_frames,
     const char* out_basename,
     const char* out_dir,
-    bool max_comp_on)
+    bool max_comp_on,
+    bool pitch_lock_on)
 {
     using namespace resynth_engine;
     SimpleResynth resynth;
     Grain grains[kNumGrains];
     resynth.Init();
-    // For these tests we exercise the partial‑based / spectral‑model path used
-    // when the mode switch (B_8) is ON on hardware.
-    resynth.SetPitchLockMode(false);
+    // Run either pitch‑locked or partial‑based / spectral‑model mode depending
+    // on the requested test pass.
+    resynth.SetPitchLockMode(pitch_lock_on);
     for (size_t g = 0; g < kNumGrains; ++g) {
         grains[g].running = false;
         grains[g].index = 0;
@@ -207,10 +206,24 @@ static bool run_one_cv_test(
     float grain_phase = 0.0f;
     std::vector<float> output(num_frames);
 
+    // Smoothed fundamental Hz so V/OCT steps behave more like a fast glide
+    // (reduces clicks when the target pitch jumps).
+    float fundamental_hz_smooth = 0.0f;
+    // Short fade-in envelope applied around V/OCT note changes in the
+    // pitch-locked cv5 test to further soften transitions without
+    // touching the MAX COMP aggressiveness itself.
+    float voct_change_env = 1.0f;
+    int   voct_change_env_samples = 0;
+    const int kVoctChangeFadeSamples = 256; // ~5.3 ms at 48 kHz
+
     // Simulate B_7 (Plateau) toggled on: run output through a simple reverb and
-    // mix 50/50 dry/wet, similar to the hardware path.
+    // mix 50/50 dry/wet, similar to the hardware path. For the V/OCT sweep in
+    // pitch‑locked mode we optionally bypass this so the V/OCT scale is heard
+    // as cleanly as possible.
     SimplePlateauSim reverb;
     reverb.init(kSampleRate);
+
+    int last_voct_step = -1;  // for cv5_voct: detect quantized note changes
 
     auto startNextGrain = [&]() {
         size_t idx = 0;
@@ -229,23 +242,109 @@ static bool run_one_cv_test(
         float smoothing = 0.35f;       // slightly fast smoothing for clear attacks
         float flatten = 0.15f;         // mostly original spectral shape
         float tilt = 0.1f;             // gently bright by default
-        float fundamental_hz = 440.0f * powf(2.0f, 2.0f - 4.75f);  // 2 V = C2 (~65.4 Hz)
+        float fundamental_hz = VoctVoltsToFundamentalHz(2.0f);  // 2 V = C2 (~65.4 Hz)
         float time_scale = 1.0f;
         float sparsity = 0.15f;        // dense spectrum for glassy tones
         float phase_diffusion = 0.1f;  // mostly coherent phase for clarity
 
+        // In pitch‑locked mode for the dedicated V/OCT sweep (cv5_voct), use a
+        // cleaner, more calibration‑style preset so the perceived note follows
+        // V/OCT steps closely.
+        bool is_voct_test = (cv_index == 4);
+        if (pitch_lock_on && is_voct_test)
+        {
+            smoothing       = 0.20f;
+            flatten         = 0.10f;
+            tilt            = 0.05f;
+            sparsity        = 0.10f;
+            phase_diffusion = 0.08f;
+            time_scale      = 1.5f;  // denser grains for quicker tracking
+        }
+
         switch (cv_index) {
             case 0: drywet = t; break;  // CV1 sweep: 0% -> 100% wet
             case 1: smoothing = 0.10f + t * 0.85f; break;  // 0.10 -> 0.95 (clear transients -> glassy pads)
-            case 2: flatten = 0.10f + t * 0.90f; break;    // 0.10 -> 1 (avoid totally unflattened corner case)
-            case 3: tilt = 2.0f * t - 1.0f; break;  // -1..1 (tilt gain clamped in engine)
-            case 4: {
-                // V/OCT linear sweep 1 V -> 4 V over full duration (e.g. 30 s for cv5)
-                float voct_volts = 1.0f + t * 3.0f;
-                fundamental_hz = 440.0f * powf(2.0f, voct_volts - 4.75f);
+            // CV3 "flatten" interpreted as a bipolar -5 V..+5 V: keep
+            // the current neutral value for the entire negative half
+            // (-5 V..0 V), then increase from there for 0..+5 V.
+            case 2: {
+                float baseline = 0.10f; // value currently used around 0 V
+                if (t <= 0.5f) {
+                    flatten = baseline;
+                } else {
+                    float u = (t - 0.5f) * 2.0f; // 0..1 for 0..+5 V
+                    flatten = baseline + u * 0.90f;
+                }
                 break;
             }
-            case 5: time_scale = 0.5f + t * (4.0f - 0.5f); break;  // 0.5 -> 4 (avoid 0.25x: too few grains → near-silence)
+            // CV4 "tilt" as -5 V..+5 V: map the most negative voltages
+            // (-5 V) to the previous -2 V setting (≈ -0.4 in the old
+            // -1..1 linear map), then fan out towards +1 across the
+            // rest of the sweep.
+            case 3: {
+                float x = 2.0f * t - 1.0f; // -1..1
+                if (x <= -0.6f) {
+                    tilt = -0.4f;
+                } else {
+                    float u = (x + 0.6f) / 1.6f; // 0 at -0.6, 1 at +1
+                    tilt = -0.4f + u * (1.0f + 0.4f); // -0.4 -> +1
+                }
+                break;
+            }
+            case 4: {
+                // V/OCT quantized sweep 1 V -> 4 V over full duration.
+                // Quantize to semitone steps over 3 octaves (36 steps).
+                constexpr int kNumSemitoneSteps = 36;
+                int step = (int)std::floor(t * (float)kNumSemitoneSteps);
+                if (step >= kNumSemitoneSteps)
+                    step = kNumSemitoneSteps - 1;
+                // When the quantized step changes in pitch‑locked mode, start a
+                // very short fade-in envelope on the wet signal so the spectral
+                // change is slightly softened instead of fully abrupt. We no
+                // longer hard-reset all grains here; the combination of this
+                // envelope and fundamental smoothing below keeps clicks low.
+                if (pitch_lock_on && step != last_voct_step && last_voct_step >= 0)
+                {
+                    voct_change_env = 0.0f;
+                    voct_change_env_samples = kVoctChangeFadeSamples;
+                }
+                last_voct_step = step;
+                float voct_volts = 1.0f + (float)step / 12.0f;  // 12 semitones per V
+                fundamental_hz = VoctVoltsToFundamentalHz(voct_volts);
+                break;
+            }
+            // CV6 "timestretch": mirror the firmware mapping so that:
+            // - The "normal" engine behaviour sits in the -1 V..+1 V band.
+            // - -5 V is even slower than before.
+            // - +1 V..+5 V quickly approach the longest feasible stretch.
+            case 5: {
+                float x = 2.0f * t - 1.0f; // -1..1
+                const float center_band = 0.2f; // ±1 V
+                if (x >= -center_band && x <= center_band) {
+                    // Compressed "normal" behaviour in -1 V..+1 V
+                    float e = x / center_band; // -1..1
+                    float shaped = (e >= 0.0f) ? powf(e, 0.5f)
+                                               : -powf(-e, 0.5f);
+                    time_scale = powf(2.0f, shaped * 3.0f); // ~0.125x..8x
+                } else if (x < -center_band) {
+                    float u = (x + 1.0f) / (1.0f - center_band); // x=-1->0, x=-0.2->1
+                    if (u < 0.0f) u = 0.0f;
+                    if (u > 1.0f) u = 1.0f;
+                    const float min_extreme = 0.03125f;
+                    const float min_normal  = 0.125f;
+                    float ratio = min_normal / min_extreme;
+                    time_scale  = min_extreme * powf(ratio, u);
+                } else {
+                    float u = (x - center_band) / (1.0f - center_band); // x=0.2->0, x=1->1
+                    if (u < 0.0f) u = 0.0f;
+                    if (u > 1.0f) u = 1.0f;
+                    const float max_normal  = 8.0f;
+                    const float max_extreme = 12.0f;
+                    float ratio = max_extreme / max_normal;
+                    time_scale  = max_normal * powf(ratio, u);
+                }
+                break;
+            }
             case 6: sparsity = t; break;          // 0 -> 1 (full spectrum -> very sparse, formant-like clusters)
             case 7:
                 phase_diffusion = t;             // 0..1 sweep (coherent -> noisy / diffused)
@@ -256,9 +355,33 @@ static bool run_one_cv_test(
         resynth.SetSmoothing(smoothing);
         resynth.SetSpectralFlatten(flatten);
         resynth.SetBrightDark(tilt);
-        resynth.SetFundamentalHz(fundamental_hz, kSampleRate);
         resynth.SetSparsity(sparsity);
         resynth.SetPhaseDiffusion(phase_diffusion);
+
+        // Smooth fundamental in Hz so discrete V/OCT steps behave more like a
+        // fast glide. This mirrors the firmware approach (short time constant)
+        // and significantly reduces clicks at note changes.
+        float target_fundamental_hz = fundamental_hz;
+        if (target_fundamental_hz <= 0.0f)
+        {
+            fundamental_hz_smooth = 0.0f;
+        }
+        else if (fundamental_hz_smooth <= 0.0f)
+        {
+            fundamental_hz_smooth = target_fundamental_hz;
+        }
+        else
+        {
+            // Time constant of a few milliseconds: quick enough for envelopes
+            // and gliss, long enough to soften hard diatonic steps.
+            const float tau   = 0.004f; // ~4 ms
+            float dt          = 1.0f / (float)kSampleRate;
+            float alpha       = 1.0f - std::exp(-dt / tau);
+            if (alpha > 1.0f)
+                alpha = 1.0f;
+            fundamental_hz_smooth += alpha * (target_fundamental_hz - fundamental_hz_smooth);
+        }
+        resynth.SetFundamentalHz(fundamental_hz_smooth, kSampleRate);
 
         float mono_in = mono[i];
         input_history[history_write_pos] = mono_in;
@@ -269,9 +392,13 @@ static bool run_one_cv_test(
             grain_phase += time_scale;
             while (grain_phase >= (float)kHopSize) {
                 startNextGrain();
-                float hop       = (float)kHopSize;
-                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.9f, 1.1f);
-                grain_phase -= hop * jitterMul;
+                float hop        = (float)kHopSize;
+                float fluff_now  = resynth.GetFluff();
+                float jitter_amt = 0.02f + 0.18f * fluff_now; // ~±2%..±20%
+                float lo         = 1.0f - jitter_amt;
+                float hi         = 1.0f + jitter_amt;
+                float jitterMul  = resynth_engine::SimpleResynth::RandUniform(lo, hi);
+                grain_phase     -= hop * jitterMul;
             }
         }
 
@@ -286,13 +413,37 @@ static bool run_one_cv_test(
         if (active_count > 0)
             wet *= 1.0f / ((float)kHopDenom * (float)active_count);
 
+        // Around V/OCT note changes in the pitch-locked cv5 test, apply a short,
+        // gentle fade-in on the wet signal only. This further reduces the
+        // audibility of discontinuities while leaving the MAX COMP path
+        // unchanged (aggressiveness is preserved for *_maxcomp outputs).
+        if (pitch_lock_on && is_voct_test && voct_change_env_samples > 0)
+        {
+            float progress = 1.0f - (float)voct_change_env_samples / (float)kVoctChangeFadeSamples;
+            if (progress < 0.0f) progress = 0.0f;
+            if (progress > 1.0f) progress = 1.0f;
+            voct_change_env = 0.2f + 0.8f * progress; // start slightly attenuated
+            --voct_change_env_samples;
+        }
+        wet *= voct_change_env;
+
         // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
         float out_mono = (active_count > 0)
             ? ((1.0f - drywet) * mono_in + drywet * wet)
             : mono_in;
 
-        float rev = reverb.process(out_mono);
-        float out_with_plateau = 0.5f * (out_mono + rev);
+        // For the dedicated V/OCT sweep in pitch‑locked mode, bypass the
+        // reverb so that the note steps are maximally clear.
+        float out_with_plateau;
+        if (pitch_lock_on && is_voct_test)
+        {
+            out_with_plateau = out_mono;
+        }
+        else
+        {
+            float rev = reverb.process(out_mono);
+            out_with_plateau = 0.5f * (out_mono + rev);
+        }
 
         output[i] = out_with_plateau;
     }
@@ -333,24 +484,29 @@ int main(int argc, char** argv)
         fprintf(stderr, "Failed to create out/\n");
         return 1;
     }
-    if (mkdir(kOutCvSweep, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "Failed to create %s\n", kOutCvSweep);
+    if (mkdir(kOutCvSweepPitch, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", kOutCvSweepPitch);
         return 1;
     }
-    if (mkdir(kOutCvSweepMaxcomp, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "Failed to create %s\n", kOutCvSweepMaxcomp);
+    if (mkdir(kOutCvSweepMaxcompPitch, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", kOutCvSweepMaxcompPitch);
         return 1;
     }
-
-    static const float kTwoPi = 6.283185307179586f;
-    std::vector<float> sine_30s(kVoctSweepNumFrames);
-    for (size_t i = 0; i < kVoctSweepNumFrames; ++i)
-        sine_30s[i] = 0.3f * sinf(kTwoPi * kSineLoopFreqHz * (float)(i % kSineLoopSamples) / (float)kSampleRate);
+    if (mkdir(kOutCvSweepPartial, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", kOutCvSweepPartial);
+        return 1;
+    }
+    if (mkdir(kOutCvSweepMaxcompPartial, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", kOutCvSweepMaxcompPartial);
+        return 1;
+    }
 
     printf("CV sweep tests: %zu sample(s) from %s\n", sample_paths.size(), samples_dir);
-    printf("  Output dirs: %s (no MAX COMP), %s (MAX COMP, avg > %.1f dBFS)\n",
-           kOutCvSweep, kOutCvSweepMaxcomp, (double)kMinAvgLevelDbFs);
-    printf("  cv1–cv4, cv6–cv8: %.1f s each; cv5_voct: %.1f s\n\n", kDurationSec, kVoctSweepDurationSec);
+    printf("  Output dirs (pitch‑locked): %s (no MAX COMP), %s (MAX COMP, avg > %.1f dBFS)\n",
+           kOutCvSweepPitch, kOutCvSweepMaxcompPitch, (double)kMinAvgLevelDbFs);
+    printf("  Output dirs (partial‑based): %s (no MAX COMP), %s (MAX COMP, avg > %.1f dBFS)\n",
+           kOutCvSweepPartial, kOutCvSweepMaxcompPartial, (double)kMinAvgLevelDbFs);
+    printf("  All CV sweeps span the full length of each input sample.\n\n");
 
     for (const std::string& inputPath : sample_paths) {
         std::vector<float> mono;
@@ -358,6 +514,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "Skip %s (wrong format or not 48 kHz).\n", inputPath.c_str());
             continue;
         }
+
         const char* path = inputPath.c_str();
         const char* lastSlash = strrchr(path, '/');
         const char* base = lastSlash ? (lastSlash + 1) : path;
@@ -368,26 +525,41 @@ int main(int argc, char** argv)
 
         printf("[ %s ] -> %s_*.wav\n", inputPath.c_str(), out_basename);
 
-        for (int pass = 0; pass < 2; ++pass) {
-            bool max_comp_on = (pass == 1);
-            const char* out_dir = max_comp_on ? kOutCvSweepMaxcomp : kOutCvSweep;
-            if (max_comp_on) printf("  MAX COMP:\n");
-            else printf("  no MAX COMP:\n");
-            for (size_t c = 0; c < kNumCvTests; ++c) {
-                if (c == 4) {
-                    if (!run_one_cv_test(c, sine_30s.data(), kVoctSweepNumFrames, out_basename, out_dir, max_comp_on)) {
-                        fprintf(stderr, "CV sweep test %zu (V/OCT) failed\n", c + 1);
-                        return 1;
-                    }
-                } else {
-                    if (!run_one_cv_test(c, mono.data(), kNumFrames, out_basename, out_dir, max_comp_on)) {
-                        fprintf(stderr, "CV sweep test %zu failed\n", c + 1);
+        // Two passes over engine modes: pitch‑locked first, then partial‑based.
+        for (int mode = 0; mode < 2; ++mode) {
+            bool pitch_lock_on = (mode == 0);
+            const char* mode_label = pitch_lock_on ? "  pitch‑locked mode:\n"
+                                                   : "  partial‑based mode:\n";
+            printf("%s", mode_label);
+
+            for (int pass = 0; pass < 2; ++pass) {
+                bool max_comp_on = (pass == 1);
+                const char* out_dir =
+                    pitch_lock_on
+                        ? (max_comp_on ? kOutCvSweepMaxcompPitch : kOutCvSweepPitch)
+                        : (max_comp_on ? kOutCvSweepMaxcompPartial : kOutCvSweepPartial);
+                if (max_comp_on) printf("    MAX COMP:\n");
+                else             printf("    no MAX COMP:\n");
+
+                for (size_t c = 0; c < kNumCvTests; ++c) {
+                    const float* src = mono.data();
+                    size_t frames     = mono.size();
+                    if (!run_one_cv_test(c, src, frames, out_basename, out_dir, max_comp_on, pitch_lock_on)) {
+                        fprintf(stderr, "CV sweep test %zu failed (cv%zu, %s, %s mode)\n",
+                                c + 1,
+                                c + 1,
+                                max_comp_on ? "MAX COMP" : "no MAX COMP",
+                                pitch_lock_on ? "pitch‑locked" : "partial‑based");
                         return 1;
                     }
                 }
             }
         }
     }
-    printf("\nDone. Outputs in %s/ and %s/\n", kOutCvSweep, kOutCvSweepMaxcomp);
+    printf("\nDone. Outputs in %s/, %s/, %s/ and %s/\n",
+           kOutCvSweepPitch,
+           kOutCvSweepMaxcompPitch,
+           kOutCvSweepPartial,
+           kOutCvSweepMaxcompPartial);
     return 0;
 }

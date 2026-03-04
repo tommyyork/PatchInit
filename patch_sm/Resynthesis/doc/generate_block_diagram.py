@@ -64,13 +64,13 @@ digraph Resynthesis {
 
     ana_buf [label="Analysis buffer\\n(FFT window)\\n\\n• Rolling history of audio\\n• Each grain reads a full\\n  window of sound"];
 
-    pvoc [label="Phase‑vocoder resynthesis\\n(ResynthEngine)\\n\\n• Analyze spectrum per grain\\n• Track phase & energy over time\\n• V/OCT maps bins around a\\n  musical fundamental"];
+    pvoc [label="Phase‑vocoder resynthesis\\n(ResynthEngine)\\n\\n• Analyze spectrum per grain\\n• Track phase & energy over time\\n• V/OCT maps bins around a\\n  musical fundamental and\\n  focuses most energy into\\n  its harmonic families"];
 
     spectral [label="Spectral shaping\\n\\n• Magnitude smoothing\\n• FLUFF (granular cloud depth)\\n  - extra diffusion\\n  - analysis-window jitter\\n  - micro-pitch jitter\\n  - per-bin mag jitter\\n• Bright / dark tilt\\n• Sparsity (keep only strongest\\n  bins for metallic tones)\\n• Phase diffusion (noisy clouds)"];
 
     grains [label="Grain playback &\\n time‑stretch\\n\\n• Overlap‑add grains\\n• Jittered launch timing\\n  for “spray” textures\\n• Time‑stretch / density\\n  around 0.25×–4×"];
 
-    comp [label="Output compressor\\n\\n• 2:1, musical leveling\\n• Keeps module loud and\\n  consistent as a sound source"];
+    comp [label="Output compressor\\n\\n• 2:1, musical leveling\\n• MAX COMP mode for\\n  aggressive leveling\\n• Keeps module loud and\\n  consistent as a sound source"];
 
     // Audio path connections
     inL  -> mix_in;
@@ -93,21 +93,21 @@ digraph Resynthesis {
         style = "rounded,dashed";
         color = "#bbbbdd";
 
-        cv1 [label="CV_1 — Dry/Wet\\nCrossfade input ↔ resynth" shape=rect fillcolor="#fff7e6"];
+        cv1 [label="CV_1 — OFFER / FEED\\nSend amount + dry/wet\\nCCW: dry, unshifted input\\nCW: pitched, granular voice\\nwhen V/OCT is patched" shape=rect fillcolor="#fff7e6"];
         cv2 [label="CV_2 — Magnitude smoothing + feedback\\nLow: crisp / no feedback\\nHigh: smeared pads with\\nresonant feedback (stable)" shape=rect fillcolor="#fff7e6"];
         cv3 [label="CV_3 — FLUFF\\nGranular cloud depth:\\nadds diffusion, jitter,\\n& micro‑modulation" shape=rect fillcolor="#fff7e6"];
         cv4 [label="CV_4 — Color (bright/dark)\\nTilt + harmonic family\\nCCW: darker / even partials\\nCW: brighter / odd partials" shape=rect fillcolor="#fff7e6"];
         cv5 [label="CV_5 — V/OCT (0–10 V)\\nSets musical fundamental\\nC0 (0 V) up to high pitches" shape=rect fillcolor="#fff7e6"];
         cv6 [label="CV_6 — Time‑stretch / density\\nBipolar around 1× time\\nSlow clouds ↔ dense motion" shape=rect fillcolor="#fff7e6"];
-        cv7 [label="CV_7 — Spectral sparsity\\nSelects only strongest bins\\nfor metallic / chime‑like tones" shape=rect fillcolor="#fff7e6"];
+        cv7 [label="CV_7 — SPARSITY\\nSelects only strongest bins\\nfor metallic / chime‑like tones" shape=rect fillcolor="#fff7e6"];
         cv8 [label="CV_8 — Phase diffusion\\nRandomizes phases for\\nnoisy, cloud‑like textures\\n(FLUFF can add extra)" shape=rect fillcolor="#fff7e6"];
 
-        b7 [label="B_7 — reserved\\n(Reverb disabled)" shape=rect fillcolor="#e8f7ff"];
+        b7 [label="B_7 — MAX COMP\\nToggle strong output\\ncompressor mode" shape=rect fillcolor="#e8f7ff"];
         b8 [label="B_8 — Mode select\\nPitch‑locked grains (ON)\\nvs partial‑based /\\nspectral model (OFF)" shape=rect fillcolor="#e8f7ff"];
     }
 
     // Control routing to audio path
-    cv1 -> grains  [label="Dry/wet crossfade" fontsize=8];
+    cv1 -> grains  [label="Send + dry/wet into\\nresynth grain engine" fontsize=8];
     cv2 -> spectral [label="Magnitude smoothing" fontsize=8];
     cv3 -> spectral [label="FLUFF stages:\\ncloud depth" fontsize=8];
     cv4 -> spectral [label="Bright / dark tilt\\n+ harmonic family" fontsize=8];
@@ -116,6 +116,7 @@ digraph Resynthesis {
     cv7 -> spectral [label="Sparsity threshold" fontsize=8];
     cv8 -> spectral [label="Phase diffusion" fontsize=8];
 
+    b7 -> comp      [label="Toggle MAX COMP\\ncompressor mode" fontsize=8];
     b8 -> pvoc      [label="Mode: pitch‑locked\\ngrains vs partial‑based" fontsize=8];
 }
 """

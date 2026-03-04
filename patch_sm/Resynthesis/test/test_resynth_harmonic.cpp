@@ -13,6 +13,7 @@
 // full Resynthesis engine.
 
 #include "../ResynthEngineHarmonic.h"
+#include "../ResynthParams.h"
 #include "wav_io.h"
 
 #include <algorithm>
@@ -131,6 +132,7 @@ static void render_with_engine(const std::vector<float> &mono_in,
                                std::vector<float>       &out)
 {
     using namespace resynth_engine;
+    using namespace resynth_params;
 
     SimpleHarmonicResynth resynth;
     Grain                 grains[kHarmonicNumGrains];
@@ -180,9 +182,7 @@ static void render_with_engine(const std::vector<float> &mono_in,
                 stepIndex
                     = (stepIndex < kNumSteps - 1) ? (stepIndex + 1) : stepIndex;
                 int   semitones = kDiatonicTwoOctaves[stepIndex];
-                float f
-                    = 440.0f
-                      * powf(2.0f, static_cast<float>(semitones) / 12.0f - 4.75f);
+                float f = SemitonesToFundamentalHz(semitones);
                 resynth.SetFundamentalHz(f, kSampleRate);
             }
             ++samplesInCurrentStep;
@@ -266,16 +266,14 @@ static bool process_one_file(const char *inputPath)
     snprintf(basename, sizeof(basename), "%.*s", (int)baseLen, base);
 
     // Held C2: 2 V on a 1 V/oct scale.
-    float fundamental_c2
-        = 440.0f * powf(2.0f, 2.0f - 4.75f); // C2 ≈ 65.4 Hz
+    float fundamental_c2 = resynth_params::VoctVoltsToFundamentalHz(2.0f); // C2 ≈ 65.4 Hz
 
     std::vector<float> outHeld;
     render_with_engine(monoHeld, kHeldNoteFrames, fundamental_c2, false, outHeld);
 
     std::vector<float> outSweep;
     // Initial fundamental for the sweep is 0 semitones offset.
-    float initial_f0
-        = 440.0f * powf(2.0f, -4.75f); // base C0-like reference
+    float initial_f0 = resynth_params::SemitonesToFundamentalHz(0); // base C0-like reference
     render_with_engine(monoSweep, kNumFrames, initial_f0, true, outSweep);
 
     char pathHeld[512];
@@ -314,7 +312,7 @@ int main(int argc, char **argv)
     if(paths.empty())
     {
         fprintf(stderr,
-                "No WAV files in %s. Add 48 kHz WAVs (e.g. church bells) "
+                "No WAV files in %s. Add 48 kHz WAVs (e.g. chromaplane, dryseq) "
                 "to run the harmonic tests.\n",
                 samples_dir);
         return 1;

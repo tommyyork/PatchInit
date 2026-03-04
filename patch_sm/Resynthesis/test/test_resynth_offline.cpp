@@ -2,6 +2,7 @@
 // the samples folder. Output: out/voct_sweep/{basename}_voct_sweep.wav
 
 #include "../ResynthEngine.h"
+#include "../ResynthParams.h"
 #include "wav_io.h"
 #include <cerrno>
 #include <cmath>
@@ -98,6 +99,7 @@ static bool process_one_voct_sweep(const char* inputPath)
     }
 
     using namespace resynth_engine;
+    using namespace resynth_params;
     SimpleResynth resynth;
     Grain grains[kNumGrains];
     resynth.Init();
@@ -108,15 +110,14 @@ static bool process_one_voct_sweep(const char* inputPath)
     }
 
     float drywet = 1.0f;  // 100% wet so output is resynthesized only (no dry mix)
-    // Approximate the firmware's partial‑based / spectral‑model path
-    // (mode switch B_8 ON) but with more aggressive defaults so that a
-    // single offline render clearly exposes the algorithm's character.
-    float smoothing        = 0.65f;  // stronger magnitude smoothing
-    float flatten          = 0.45f;  // noticeably whitening the spectrum
-    float tilt             = 0.35f;  // audibly bright by default
-    float sparsity         = 0.45f;  // moderate spectral carving
-    float phase_diffusion  = 0.35f;  // clear but animated phase
-    float fluff            = 0.55f;  // engage multiple FLUFF stages by default
+    // V/OCT calibration-style preset: pitch‑locked grains, light shaping so that
+    // the perceived pitch closely follows the diatonic V/OCT steps.
+    float smoothing        = 0.20f;  // faster magnitude tracking for clear note steps
+    float flatten          = 0.10f;  // mostly original spectral shape
+    float tilt             = 0.10f;  // gently bright
+    float sparsity         = 0.10f;  // keep spectrum relatively dense
+    float phase_diffusion  = 0.10f;  // modest phase animation only
+    float fluff            = 0.20f;  // light clouding without smearing pitch
 
     resynth.SetSmoothing(smoothing);
     resynth.SetSpectralFlatten(flatten);
@@ -124,11 +125,11 @@ static bool process_one_voct_sweep(const char* inputPath)
     resynth.SetSparsity(sparsity);
     resynth.SetPhaseDiffusion(phase_diffusion);
     resynth.SetFluff(fluff);
-    // Match the firmware's partial‑based mode (pitch_lock_mode_ == false).
+    // Pitch‑locked grains for a scale‑like V/OCT response in this offline test.
     resynth.SetPureResynthMode(false);
-    resynth.SetPitchLockMode(false);
+    resynth.SetPitchLockMode(true);
 
-    const float time_scale = 1.0f;  // neutral (no time stretch) for offline test
+    const float time_scale = 1.5f;  // slightly denser grains for quicker V/OCT response
 
     float input_history[kFftSize];
     size_t history_write_pos  = 0;
@@ -138,6 +139,18 @@ static bool process_one_voct_sweep(const char* inputPath)
     // Smoothed wet gain to reduce pumping when the number of overlapping
     // grains changes, mirroring the realtime firmware behaviour.
     float wet_gain_state      = 1.0f;
+
+    // Smoothed fundamental Hz for the diatonic V/OCT sweep so that
+    // steps behave like a fast glide instead of a hard jump. This
+    // reduces clicks at note boundaries.
+    float fundamental_hz_smooth = 0.0f;
+    // Short crossfade envelope applied when the diatonic step changes
+    // so the transition is less abrupt, complementing the smoothed
+    // fundamental without touching the MAX COMP parameters used
+    // elsewhere in the test suite.
+    float step_change_env = 1.0f;
+    int   step_change_env_samples = 0;
+    const int kStepChangeFadeSamples = 256; // ~5.3 ms at 48 kHz
 
     size_t stepIndex = 0;
     unsigned samplesInCurrentStep = 0;
@@ -159,9 +172,35 @@ static bool process_one_voct_sweep(const char* inputPath)
             samplesInCurrentStep = 0;
             stepIndex = (stepIndex < kNumSteps - 1) ? (stepIndex + 1) : stepIndex;
             int semitones = kDiatonicTwoOctaves[stepIndex];
-            // V/OCT: semitones/12 = volts (0 V = C0, 1 V = C1, 2 V = C2)
-            float fundamental_hz = 440.0f * powf(2.0f, semitones / 12.0f - 4.75f);
-            resynth.SetFundamentalHz(fundamental_hz, kSampleRate);
+            float target_fundamental_hz = SemitonesToFundamentalHz(semitones);
+
+            // Smooth the fundamental across diatonic steps instead of hard
+            // jumping. This keeps the perceived scale intact but avoids the
+            // sharp discontinuities that produced clicks at each note.
+            if (target_fundamental_hz <= 0.0f)
+            {
+                fundamental_hz_smooth = 0.0f;
+            }
+            else if (fundamental_hz_smooth <= 0.0f)
+            {
+                fundamental_hz_smooth = target_fundamental_hz;
+            }
+            else
+            {
+                const float tau   = 0.004f; // ~4 ms, similar to firmware
+                float dt          = 1.0f / (float)kSampleRate;
+                float alpha       = 1.0f - std::exp(-dt / tau);
+                if (alpha > 1.0f)
+                    alpha = 1.0f;
+                fundamental_hz_smooth += alpha * (target_fundamental_hz - fundamental_hz_smooth);
+            }
+            resynth.SetFundamentalHz(fundamental_hz_smooth, kSampleRate);
+
+            // Start a short fade-in envelope when the diatonic step advances so
+            // that the new note ramps up smoothly instead of appearing as a
+            // full-amplitude discontinuity. We no longer hard-reset grains here.
+            step_change_env = 0.0f;
+            step_change_env_samples = kStepChangeFadeSamples;
         }
         ++samplesInCurrentStep;
 
@@ -176,10 +215,16 @@ static bool process_one_voct_sweep(const char* inputPath)
             while (grain_phase >= (float)kHopSize)
             {
                 startNextGrain();
-                float hop       = (float)kHopSize;
-                // Mild jitter, as used in the firmware, to avoid both a rigid
-                // launch grid and large fluctuations in grain overlap.
-                float jitterMul = resynth_engine::SimpleResynth::RandUniform(0.9f, 1.1f);
+                float hop        = (float)kHopSize;
+                float fluff_now  = resynth.fluff;
+                float jitter_amt = 0.02f + 0.18f * fluff_now; // ~±2%..±20%
+                float lo         = 1.0f - jitter_amt;
+                float hi         = 1.0f + jitter_amt;
+                // Mild jitter around the nominal hop so we avoid a rigid
+                // launch grid but tie the depth to FLUFF, mirroring the
+                // firmware behaviour.
+                float jitterMul
+                    = resynth_engine::SimpleResynth::RandUniform(lo, hi);
                 grain_phase -= hop * jitterMul;
             }
         }
@@ -203,6 +248,18 @@ static bool process_one_voct_sweep(const char* inputPath)
             wet_gain_state += alpha * (target_gain - wet_gain_state);
         }
         wet *= wet_gain_state;
+
+        // Apply a short, gentle fade around diatonic step changes so the
+        // transition between notes remains scale-like but less clicky.
+        if (step_change_env_samples > 0)
+        {
+            float progress = 1.0f - (float)step_change_env_samples / (float)kStepChangeFadeSamples;
+            if (progress < 0.0f) progress = 0.0f;
+            if (progress > 1.0f) progress = 1.0f;
+            step_change_env = 0.2f + 0.8f * progress; // brief attenuation
+            --step_change_env_samples;
+        }
+        wet *= step_change_env;
 
         // When no grains are active yet (first kFftSize samples), pass dry to avoid leading silence
         float out_mono = (active_count > 0)

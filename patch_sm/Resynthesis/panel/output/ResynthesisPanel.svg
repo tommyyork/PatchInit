@@ -115,8 +115,8 @@
   <circle cx="39.65" cy="42.027" r="3.750" fill="#000000" stroke="#ffffff" stroke-width="0.3" />
 
   <!-- Labels beneath pots row 1 (y >= 26.5), font 3.6 mm (>= 10 pt); clear of 12mm knob -->
-  <rect x="0.856" y="29.520" width="20.640" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
-  <text x="11.176" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DRY / WET</text>
+  <rect x="5.176" y="29.520" width="12.000" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
+  <text x="11.176" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">OFFER</text>
   <rect x="32.570" y="29.520" width="14.160" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
   <text x="39.65" y="33" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">SMOOTH</text>
 
@@ -193,15 +193,21 @@
   <rect x="40.890" y="75.520" width="5.520" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
   <text x="43.65" y="79.0" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">B6</text>
 
-  <!-- Middle row (y=98.312) ? V/OCT, TIME, DENSITY, D (italic, diffusion) -->
+  <!-- Middle row (y=98.312) – V/OCT, italic t (TIME), SPARSITY, italic d (diffusion) -->
   <rect x="1.150" y="89.320" width="12.000" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
   <text x="7.15" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">V/OCT</text>
-  <rect x="14.397" y="89.320" width="9.840" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
-  <text x="19.317" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">TIME</text>
-  <rect x="23.323" y="89.320" width="16.320" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
-  <text x="31.483" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">DENSITY</text>
+  <rect x="17.637" y="89.320" width="3.360" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
+  <text x="19.317" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle"
+        fill="#ffffff"
+        font-family="DIN 2014, Gidole, 'DIN Alternate', sans-serif"
+        font-style="italic">t</text>
+  <rect x="22.243" y="89.320" width="18.480" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
+  <text x="31.483" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff">SPARSITY</text>
   <rect x="41.970" y="89.320" width="3.360" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />
-  <text x="43.65" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle" fill="#ffffff" font-style="italic">D</text>
+  <text x="43.65" y="92.8" class="panel-text" font-size="3.6" text-anchor="middle"
+        fill="#ffffff"
+        font-family="DIN 2014, Gidole, 'DIN Alternate', sans-serif"
+        font-style="italic">D</text>
 
   <!-- Bottom row (y=111.9) ? IN L, IN R, OUT L, OUT R -->
   <rect x="2.230" y="102.920" width="9.840" height="4.800" rx="1.440" fill="#000000" stroke="none" data-panel-role="label-bg" />

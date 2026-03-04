@@ -13,6 +13,7 @@
 //   4: Stages 1–4: + per‑bin magnitude jitter (full granular cloud)
 
 #include "../ResynthEngine.h"
+#include "../ResynthParams.h"
 #include "wav_io.h"
 
 #include <algorithm>
@@ -34,42 +35,17 @@
 #endif
 
 static constexpr unsigned kSampleRate = 48000;
-static constexpr float    kBpm        = 120.0f;
 
-// One diatonic octave (major scale) from 2 V to 3 V: 8 steps, one per quarter note.
+// One diatonic octave (major scale) from 2 V to 3 V.
+// The scale will be spread evenly across the second repetition of the sample.
 static const int   kDiatonicOneOctave[] = {0, 2, 4, 5, 7, 9, 11, 12};
 static const size_t kNumSteps           = sizeof(kDiatonicOneOctave) / sizeof(kDiatonicOneOctave[0]);
-static constexpr unsigned kSamplesPerStep
-    = (unsigned)(kSampleRate * 60.0f / kBpm + 0.5f); // one quarter note at 120 BPM
-static constexpr size_t kNumFrames
-    = (size_t)(kSamplesPerStep * kNumSteps);
 
 static const char kOutFluffDir[] = "out/fluff";
 
 // Reuse the MAX COMP compressor shape from the CV sweep tests so FLUFF
 // results are rendered at a similar loudness to firmware with MAX COMP on.
-static constexpr float kCompThreshMax = 0.2f;
-static constexpr float kCompRatioMax  = -2.0f;
-static constexpr float kCompMakeupMax = 2.6f;
-static constexpr float kSoftClipLim   = 0.95f;
-static constexpr float kCompAttack    = 0.0003f;
-static constexpr float kCompRelease   = 0.05f;
-
-struct FluffSetting
-{
-    const char* name;
-    float       fluff_value;
-};
-
-// Choose FLUFF values that map cleanly onto 0..4 active stages in the engine.
-static const FluffSetting kFluffSettings[] = {
-    {"combo0", 0.0f},  // 0 stages
-    {"combo1", 0.30f}, // 1 stage
-    {"combo2", 0.55f}, // 2 stages
-    {"combo3", 0.80f}, // 3 stages
-    {"combo4", 1.00f}, // 4 stages
-};
-static const size_t kNumFluffSettings = sizeof(kFluffSettings) / sizeof(kFluffSettings[0]);
+using namespace resynth_params;
 
 static void apply_max_comp(float* buf, size_t num_frames)
 {
@@ -159,21 +135,30 @@ static bool process_one_file_with_fluff(const char* inputPath)
         return false;
     }
 
-    size_t              numFramesIn = info.numFrames;
-    std::vector<float>  mono(kNumFrames);
+    size_t             numFramesIn = info.numFrames;
+    if(numFramesIn == 0)
+    {
+        fprintf(stderr, "Skip %s (empty file).\n", inputPath);
+        return false;
+    }
+
+    // We render two repetitions of the input sample:
+    //  - First repetition: FLUFF swept 0→1, no V/OCT movement (fixed fundamental).
+    //  - Second repetition: FLUFF swept 0→1 again, with a diatonic 2–3 V scale
+    //    spread across the full length of the second repetition.
+    const size_t totalFrames = numFramesIn * 2;
+
+    std::vector<float>  mono(numFramesIn);
     if(info.numChannels == 1)
     {
-        for(size_t i = 0; i < kNumFrames; ++i)
-            mono[i] = i < numFramesIn ? inputSamples[i] : 0.0f;
+        for(size_t i = 0; i < numFramesIn; ++i)
+            mono[i] = inputSamples[i];
     }
     else
     {
-        for(size_t i = 0; i < kNumFrames; ++i)
+        for(size_t i = 0; i < numFramesIn; ++i)
         {
-            if(i < numFramesIn)
-                mono[i] = 0.5f * (inputSamples[i * 2] + inputSamples[i * 2 + 1]);
-            else
-                mono[i] = 0.0f;
+            mono[i] = 0.5f * (inputSamples[i * 2] + inputSamples[i * 2 + 1]);
         }
     }
 
@@ -187,133 +172,142 @@ static bool process_one_file_with_fluff(const char* inputPath)
 
     using namespace resynth_engine;
 
-    for(size_t f = 0; f < kNumFluffSettings; ++f)
+    SimpleResynth resynth;
+    Grain         grains[kNumGrains];
+    resynth.Init();
+    for(size_t g = 0; g < kNumGrains; ++g)
     {
-        const FluffSetting& fs = kFluffSettings[f];
+        grains[g].running = false;
+        grains[g].index   = 0;
+    }
 
-        SimpleResynth resynth;
-        Grain         grains[kNumGrains];
-        resynth.Init();
+    float drywet = 1.0f; // 100% wet: hear resynth only
+    // Use assertive defaults for smoothing/flatten/tilt, but keep sparsity and
+    // diffusion near minimum so FLUFF is the main driver of texture.
+    resynth.SetSmoothing(0.8f);        // heavy magnitude smoothing
+    resynth.SetSpectralFlatten(0.65f); // strongly whiten / flatten spectrum
+    resynth.SetBrightDark(0.45f);      // noticeably bright tilt
+    resynth.SetSparsity(0.05f);        // minimal spectral carving by default
+    resynth.SetPhaseDiffusion(0.05f);  // very low phase diffusion; FLUFF adds more
+    // Exercise the partial‑based / spectral‑model mode used when B_8 is ON.
+    resynth.SetPitchLockMode(false);
+
+    float  input_history[kFftSize];
+    size_t history_write_pos  = 0;
+    size_t total_samples_seen = 0;
+    float  grain_phase        = 0.0f;
+    std::vector<float> output(totalFrames);
+
+    auto startNextGrain = [&]() {
+        size_t idx = 0;
         for(size_t g = 0; g < kNumGrains; ++g)
         {
-            grains[g].running = false;
-            grains[g].index   = 0;
-        }
-
-        float drywet = 1.0f; // 100% wet: hear resynth only
-        // Use assertive defaults for smoothing/flatten/tilt, but keep sparsity and
-        // diffusion near minimum so FLUFF is the main driver of texture.
-        resynth.SetSmoothing(0.8f);        // heavy magnitude smoothing
-        resynth.SetSpectralFlatten(0.65f); // strongly whiten / flatten spectrum
-        resynth.SetBrightDark(0.45f);      // noticeably bright tilt
-        resynth.SetSparsity(0.05f);        // minimal spectral carving by default
-        resynth.SetPhaseDiffusion(0.05f);  // very low phase diffusion; FLUFF adds more
-        resynth.SetFluff(fs.fluff_value);
-        // Exercise the partial‑based / spectral‑model mode used when B_8 is ON.
-        resynth.SetPitchLockMode(false);
-
-        float input_history[kFftSize];
-        size_t history_write_pos  = 0;
-        size_t total_samples_seen = 0;
-        float  grain_phase        = 0.0f;
-        std::vector<float> output(kNumFrames);
-
-        size_t   stepIndex           = 0;
-        unsigned samplesInCurStep    = 0;
-
-        auto startNextGrain = [&]() {
-            size_t idx = 0;
-            for(size_t g = 0; g < kNumGrains; ++g)
+            if(!grains[g].running)
             {
-                if(!grains[g].running)
-                {
-                    idx = g;
-                    break;
-                }
+                idx = g;
+                break;
             }
-            resynth.StartGrainFromHistory(input_history, history_write_pos, grains[idx]);
-        };
+        }
+        resynth.StartGrainFromHistory(input_history, history_write_pos, grains[idx]);
+    };
 
-        for(size_t i = 0; i < kNumFrames; ++i)
+    for(size_t i = 0; i < totalFrames; ++i)
+    {
+        const bool   inFirstRepetition = (i < numFramesIn);
+        const size_t posInSample       = inFirstRepetition ? i : (i - numFramesIn);
+
+        // Sweep FLUFF from 0 → 1 over the length of each repetition.
+        float sweep_phase = (float)posInSample / (float)numFramesIn;
+        if(sweep_phase < 0.0f)
+            sweep_phase = 0.0f;
+        if(sweep_phase > 1.0f)
+            sweep_phase = 1.0f;
+        resynth.SetFluff(sweep_phase);
+
+        // V/OCT behaviour:
+        //  - First repetition: fixed fundamental (no V/OCT movement).
+        //  - Second repetition: diatonic 2–3 V scale spread across the repetition.
+        float voct_volts;
+        if(inFirstRepetition)
         {
-            if(samplesInCurStep >= kSamplesPerStep)
-            {
-                samplesInCurStep = 0;
-                stepIndex        = (stepIndex < kNumSteps - 1) ? (stepIndex + 1) : stepIndex;
-            }
-            ++samplesInCurStep;
-
-            int   semitones   = kDiatonicOneOctave[stepIndex];
-            float voct_volts  = 2.0f + (float)semitones / 12.0f; // 2 V .. 3 V over one octave
-            float fundamental = 440.0f * powf(2.0f, voct_volts - 4.75f);
-            resynth.SetFundamentalHz(fundamental, kSampleRate);
-
-            float mono_in = mono[i];
-            input_history[history_write_pos] = mono_in;
-            history_write_pos                = (history_write_pos + 1) % kFftSize;
-            ++total_samples_seen;
-
-            if(total_samples_seen >= kFftSize)
-            {
-                const float time_scale = 1.0f;
-                grain_phase += time_scale;
-                while(grain_phase >= (float)kHopSize)
-                {
-                    startNextGrain();
-                    float hop       = (float)kHopSize;
-                    // Mild jitter as in the firmware path so grains form a dense,
-                    // but not wildly varying, cloud.
-                    float jitterMul = SimpleResynth::RandUniform(0.9f, 1.1f);
-                    grain_phase -= hop * jitterMul;
-                }
-            }
-
-            float  wet          = 0.0f;
-            size_t active_count = 0;
-            for(size_t g = 0; g < kNumGrains; ++g)
-            {
-                if(grains[g].running)
-                {
-                    wet += grains[g].Process();
-                    ++active_count;
-                }
-            }
-            if(active_count > 0)
-                wet *= 1.0f / ((float)kHopDenom * (float)active_count);
-
-            float out_mono = (active_count > 0)
-                                 ? ((1.0f - drywet) * mono_in + drywet * wet)
-                                 : mono_in;
-
-            // Soft clip to reduce peaks
-            float lim = 0.95f;
-            if(out_mono > lim)
-                out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
-            if(out_mono < -lim)
-                out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
-
-            output[i] = out_mono;
+            voct_volts = 2.0f; // treat as a fixed note when V/OCT is "unpatched"
         }
-
-        char outPath[512];
-        snprintf(outPath,
-                 sizeof(outPath),
-                 "%s/%s_%s.wav",
-                 kOutFluffDir,
-                 out_basename,
-                 fs.name);
-
-        // Apply offline MAX COMP so FLUFF renders match the firmware path
-        // with the MAX COMP switch engaged.
-        apply_max_comp(output.data(), kNumFrames);
-
-        if(!SaveWav(outPath, output.data(), kNumFrames, kSampleRate, 1))
+        else
         {
-            fprintf(stderr, "Failed to write %s\n", outPath);
-            return false;
+            float  frac      = (float)posInSample / (float)numFramesIn;
+            size_t stepIndex = (size_t)(frac * (float)kNumSteps);
+            if(stepIndex >= kNumSteps)
+                stepIndex = kNumSteps - 1;
+            int semitones = kDiatonicOneOctave[stepIndex];
+            voct_volts    = 2.0f + (float)semitones / 12.0f; // 2 V .. 3 V over one octave
         }
-        printf("  %s\n", outPath);
+        float fundamental = resynth_params::VoctVoltsToFundamentalHz(voct_volts);
+        resynth.SetFundamentalHz(fundamental, kSampleRate);
+
+        float mono_in = mono[posInSample];
+        input_history[history_write_pos] = mono_in;
+        history_write_pos                = (history_write_pos + 1) % kFftSize;
+        ++total_samples_seen;
+
+        if(total_samples_seen >= kFftSize)
+        {
+            const float time_scale = 1.0f;
+            grain_phase += time_scale;
+            while(grain_phase >= (float)kHopSize)
+            {
+                startNextGrain();
+                float hop       = (float)kHopSize;
+                // Mild jitter as in the firmware path so grains form a dense,
+                // but not wildly varying, cloud.
+                float jitterMul = SimpleResynth::RandUniform(0.9f, 1.1f);
+                grain_phase -= hop * jitterMul;
+            }
+        }
+
+        float  wet          = 0.0f;
+        size_t active_count = 0;
+        for(size_t g = 0; g < kNumGrains; ++g)
+        {
+            if(grains[g].running)
+            {
+                wet += grains[g].Process();
+                ++active_count;
+            }
+        }
+        if(active_count > 0)
+            wet *= 1.0f / ((float)kHopDenom * (float)active_count);
+
+        float out_mono = (active_count > 0)
+                             ? ((1.0f - drywet) * mono_in + drywet * wet)
+                             : mono_in;
+
+        // Soft clip to reduce peaks
+        float lim = 0.95f;
+        if(out_mono > lim)
+            out_mono = lim + (out_mono - lim) / (1.0f + (out_mono - lim));
+        if(out_mono < -lim)
+            out_mono = -lim + (out_mono + lim) / (1.0f - (out_mono + lim));
+
+        output[i] = out_mono;
     }
+
+    char outPath[512];
+    snprintf(outPath,
+             sizeof(outPath),
+             "%s/%s_fluff_sweep.wav",
+             kOutFluffDir,
+             out_basename);
+
+    // Apply offline MAX COMP so FLUFF renders match the firmware path
+    // with the MAX COMP switch engaged.
+    apply_max_comp(output.data(), totalFrames);
+
+    if(!SaveWav(outPath, output.data(), totalFrames, kSampleRate, 1))
+    {
+        fprintf(stderr, "Failed to write %s\n", outPath);
+        return false;
+    }
+    printf("  %s\n", outPath);
 
     return true;
 }
