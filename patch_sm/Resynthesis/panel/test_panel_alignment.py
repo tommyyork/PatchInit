@@ -414,23 +414,29 @@ def parse_patch_init_holes_from_kicad(kicad_path: Path) -> list[tuple[float, flo
 
         # Infer a mechanical panel cutout radius for this footprint where
         # possible, mirroring the mapping used for the diagnostic footprint
-        # overlay renderer below.
+        # overlay renderer below. Panel diameters and clearances match the
+        # values documented in panel/datasheets/README.md.
         mech_r: float | None = None
         if mod_footprint_name:
             fp_basename = mod_footprint_name.split(":")[-1]
             name_upper = fp_basename.upper()
             panel_diam: float | None
             if "9MM_SNAP-IN_POT" in name_upper:
-                panel_diam = 6.35
+                # 9 mm snap-in pot: 7.5 mm ⌀ panel (7.2 mm drill + 0.3 mm clearance).
+                panel_diam = POT_PANEL_DIAMETER_MM
             elif "S_JACK" in name_upper:
-                panel_diam = 6.3
+                # 3.5 mm jack: 6.3 mm ⌀ panel (6.2 mm drill + 0.1 mm clearance).
+                panel_diam = JACK_PANEL_DIAMETER_MM
             elif "TL1105" in name_upper:
-                panel_diam = 5.5
+                # TL1105 tactile switch: 5.5 mm ⌀ panel (5.5 mm drill + 0.0 mm clearance).
+                panel_diam = SWITCH_B7_PANEL_DIAMETER_MM
             elif "TOGGLE" in name_upper and "ON-ON" in name_upper:
-                panel_diam = 6.3
+                # TOGGLE_ON-ON (B_8): 6.3 mm ⌀ panel (6.2 mm drill + 0.1 mm clearance).
+                panel_diam = SWITCH_B8_PANEL_DIAMETER_MM
             elif "LED" in name_upper:
-                # Front-panel LED components use the LED drill family diameter
-                # derived from `blank-NPTH.drl` and exposed by the generator.
+                # Front-panel LED: 3.2 mm ⌀ panel (3.2 mm drill + 0.0 mm clearance).
+                # Uses the LED drill family diameter derived from `blank-NPTH.drl`
+                # and exposed by the generator.
                 panel_diam = LED_DRILL_DIAMETER_MM
             else:
                 panel_diam = None
@@ -927,25 +933,26 @@ def _render_panel_cutout_overlay_for_footprint(fp_basename: str) -> None:
     # Choose a panel cutout diameter based on the footprint / part family.
     # We intentionally mirror the module selection heuristic used for front‑panel
     # hardware (jacks J_*, pots VR_*, switches SW_*, LEDs) and then apply a
-    # fixed mechanical diameter centred at (0, 0) inside the footprint:
+    # fixed mechanical diameter centred at (0, 0) inside the footprint.
     #
-    # - 9MM_SNAP-IN_POT… footprints → 6.2 mm panel cutout.
-    # - S_JACK… footprints            → 6.3 mm panel cutout.
-    # - TL1105… footprints            → 5.5 mm panel cutout.
-    # - Generic TOGGLE-ON-ON switch   → 6.3 mm panel cutout.
+    # Diameters and clearances match panel/datasheets/README.md:
+    # - 9MM_SNAP-IN_POT… footprints → 7.5 mm ⌀ panel (7.2 mm drill + 0.3 mm clearance).
+    # - S_JACK… footprints          → 6.3 mm ⌀ panel (6.2 mm drill + 0.1 mm clearance).
+    # - TL1105… footprints          → 5.5 mm ⌀ panel (5.5 mm drill + 0.0 mm clearance).
+    # - TOGGLE_ON-ON (B_8) switch   → 6.3 mm ⌀ panel (6.2 mm drill + 0.1 mm clearance).
     #
     # The cutout is always placed at the local footprint origin so it lines up
     # with the derived hardware centre used elsewhere in this module.
     name_upper = fp_basename.upper()
     panel_diam: float | None
     if "9MM_SNAP-IN_POT" in name_upper:
-        panel_diam = 6.35
+        panel_diam = POT_PANEL_DIAMETER_MM
     elif "S_JACK" in name_upper:
-        panel_diam = 6.3
+        panel_diam = JACK_PANEL_DIAMETER_MM
     elif "TL1105" in name_upper:
-        panel_diam = 5.5
+        panel_diam = SWITCH_B7_PANEL_DIAMETER_MM
     elif "TOGGLE" in name_upper and "ON-ON" in name_upper:
-        panel_diam = 6.3
+        panel_diam = SWITCH_B8_PANEL_DIAMETER_MM
     elif "LED" in name_upper:
         panel_diam = LED_DRILL_DIAMETER_MM
     else:

@@ -81,7 +81,7 @@ inline void FftInPlace(Complex *data, size_t n, bool inverse)
 // Constants and phase-vocoder structures
 // ----------------------------------------------------------------------
 
-static constexpr size_t kFftBits   = 7;
+static constexpr size_t kFftBits   = 11;
 static constexpr size_t kFftSize   = 1 << kFftBits;
 static constexpr size_t kHopDenom  = 4;
 static constexpr size_t kHopSize   = kFftSize / kHopDenom;

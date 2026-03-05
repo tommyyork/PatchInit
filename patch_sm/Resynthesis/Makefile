@@ -54,7 +54,7 @@ program-dfu:
 INKSCAPE ?= inkscape
 PANEL_OUTPUT_DIR := panel/output
 
-.PHONY: panel svg tests samples test_resynth_props test_panel resynthesis-clean clean
+.PHONY: panel svg tests samples test_resynth_props test_panel test_voct resynthesis-clean clean
 
 # High-level panel target:
 # 1. Regenerate the canonical ResynthesisPanel.svg from the generator script.
@@ -95,8 +95,8 @@ DOC_DIR := doc
 test_binaries:
 	$(MAKE) -C test all
 
-# Automated tests: property checks plus panel alignment.
-tests: test_resynth_props panel test_panel
+# Automated tests: property checks, V/OCT harmonic tests, plus panel alignment.
+tests: test_resynth_props test_voct panel test_panel
 
 test_resynth_props:
 	$(MAKE) -C test tests
@@ -108,6 +108,13 @@ test_panel:
 # generate WAVs under test/out/ for subjective evaluation.
 samples:
 	$(MAKE) -C test samples
+
+# V/OCT harmonic analysis: OneShotOneOsc.wav -> test/out/voct_harmonic/*.csv, *.svg
+test_voct:
+	$(MAKE) -C test voct
+
+.PHONY: voct
+voct: test_voct
 
 # Documentation: US Letter–sized block diagram of the audio path and controls.
 # Invoke from the Resynthesis module root:
